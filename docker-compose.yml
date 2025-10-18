@@ -1,0 +1,80 @@
+# 🚀 docker-compose.yml
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: elasticsearch-1
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 🔹 Streamlit Frontend
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streamlit-1
+    ports:
+      - "8501:8501"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    volumes:
+      - ./code/streamlit:/app
+
+  # 🔹 Data-Ingestion Backend (FMP)
+  ingest_fmp:
+    build:
+      context: .
+      dockerfile: Dockerfile-ingest
+    container_name: ingest-fmp
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    volumes:
+      - ./code/API:/app
+    command: ["bash", "-c", "while true; do python /app/ingest_fmp.py; sleep 86400; done"]
+
+  # 🔹 Data-Ingestion Backend (Yahoo Finance)
+    # 🔹 Data-Ingestion Backend (Yahoo Finance)
+  ingest_yf:
+    build:
+      context: .
+      dockerfile: Dockerfile-ingest
+    container_name: ingest-yf
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    volumes:
+      - ./code/API:/app
+    command: ["bash", "-c", "while true; do python /app/ingest_yf.py; echo '⏳ Warte 24 Stunden...'; sleep 86400; done"]
+    restart: always
+
+
+
+# 🔽 Volumes gehören GANZ NACH UNTEN und ohne Einrückung
+volumes:
+  esdata:
