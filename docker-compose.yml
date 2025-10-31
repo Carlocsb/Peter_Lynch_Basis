@@ -55,7 +55,6 @@ services:
     command: ["bash", "-c", "while true; do python /app/ingest_fmp.py; sleep 86400; done"]
 
   # 🔹 Data-Ingestion Backend (Yahoo Finance)
-    # 🔹 Data-Ingestion Backend (Yahoo Finance)
   ingest_yf:
     build:
       context: .
@@ -68,10 +67,27 @@ services:
       - .env
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - TZ=Europe/Berlin
     volumes:
       - ./code/API:/app
-    command: ["bash", "-c", "while true; do python /app/ingest_yf.py; echo '⏳ Warte 24 Stunden...'; sleep 86400; done"]
-    restart: always
+    command: ["bash", "/app/start_ingest.sh"]
+  # 🔹 Data-Ingestion Backend (Alpha Vantage)
+  ingest_av:
+    build:
+      context: .
+      dockerfile: Dockerfile-ingest
+    container_name: ingest-av
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    volumes:
+      - ./code/API:/app
+    # stündlich/taeglich etc. – zum Testen einmalig laufen lassen oder in Loop
+    command: ["bash", "-c", "python /app/ingest_av.py"]
 
 
 

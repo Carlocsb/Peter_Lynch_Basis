@@ -9,7 +9,6 @@ from typing import Dict, List
 import yfinance as yf
 from elasticsearch import helpers
 from dotenv import load_dotenv
-
 from utils import es_client, es_healthcheck, ensure_index
 
 # === 1️⃣ Setup ===
@@ -41,22 +40,26 @@ def load_symbols() -> List[str]:
         return symbols
 
 # === 3️⃣ Metriken ===
+# Nur informativ – wir lesen dynamisch aus FIELD_MAP; diese Liste muss nicht 1:1 genutzt werden.
 METRIC_FIELDS = [
     "trailingPE", "priceToBook", "trailingEps", "dividendYield", "marketCap",
     "bookValue", "freeCashflow", "totalDebt", "totalRevenue",
     "revenueGrowth", "profitMargins", "pegRatio", "sector", "industry", "beta",
     "trailingAnnualDividendRate", "debtToEquity", "quickRatio", "currentRatio",
-    "payoutRatio", "totalCashPerShare"
+    "payoutRatio", "totalCashPerShare", "earningsGrowth", "totalAssets",
+    # NEW ↓
+    "totalCash", "sharesOutstanding", "totalStockholderEquity",
 ]
 
+# yfinance.info → interne Feldnamen
 FIELD_MAP = {
     "trailingPE": "peRatio",
     "priceToBook": "priceToBook",
     "trailingEps": "eps",
     "dividendYield": "dividendYield",
     "marketCap": "marketCap",
-    "bookValue": "bookValuePerShare",
-    "freeCashflow": "freeCashFlow",
+    "bookValue": "bookValuePerShare",          # yfinance 'bookValue' ist pro Aktie
+    "freeCashflow": "freeCashflow",
     "totalDebt": "totalDebt",
     "totalRevenue": "revenue",
     "revenueGrowth": "revenueGrowth",
@@ -65,26 +68,67 @@ FIELD_MAP = {
     "sector": "sector",
     "industry": "industry",
     "beta": "beta",
-    "trailingAnnualDividendRate": "dividendRate",
+    "trailingAnnualDividendRate": "trailingAnnualDividendRate",
     "debtToEquity": "debtToEquity",
     "quickRatio": "quickRatio",
     "currentRatio": "currentRatio",
     "payoutRatio": "payoutRatio",
     "totalCashPerShare": "cashPerShare",
+    "earningsGrowth": "earningsGrowth",
+    "totalAssets": "totalAssets",
+    # NEW ↓ Rohwerte für abgeleitete Kennzahlen
+    "totalCash": "totalCash",
+    "sharesOutstanding": "sharesOutstanding",
+    "totalStockholderEquity": "totalStockholderEquity",
 }
 
 # === 4️⃣ Daten laden ===
 def get_metrics(symbol: str) -> Dict:
     ticker = yf.Ticker(symbol)
     info = ticker.info
-    metrics = {}
+    metrics: Dict[str, float | str] = {}
 
+    # Rohfelder mappen
     for yf_field, our_field in FIELD_MAP.items():
         val = info.get(yf_field)
+        # yfinance liefert oft None, ints, floats, teils strings
         if isinstance(val, (int, float)):
             metrics[our_field] = float(val)
         elif isinstance(val, str):
             metrics[our_field] = val
+
+    # === 4a) Abgeleitete Kennzahlen (für Lynch-Kategorien) ===
+    # cashToDebt: Cash >= 50 % der Schulden
+    total_cash = metrics.get("totalCash")
+    total_debt = metrics.get("totalDebt")
+    if isinstance(total_cash, float) and isinstance(total_debt, float) and total_debt not in (0.0, None):
+        metrics["cashToDebt"] = total_cash / total_debt
+
+    # equityRatio: Eigenkapitalquote = Equity / Assets
+    total_equity = metrics.get("totalStockholderEquity")
+    total_assets = metrics.get("totalAssets")
+    if isinstance(total_equity, float) and isinstance(total_assets, float) and total_assets not in (0.0, None):
+        metrics["equityRatio"] = total_equity / total_assets
+
+    # freeCashFlowPerShare
+    fcf = metrics.get("freeCashflow")
+    shares = metrics.get("sharesOutstanding")
+    if isinstance(fcf, float) and isinstance(shares, float) and shares not in (0.0, None):
+        metrics["freeCashFlowPerShare"] = fcf / shares
+
+    # fcfMargin: FCF / Revenue
+    revenue = metrics.get("revenue")
+    if isinstance(fcf, float) and isinstance(revenue, float) and revenue not in (0.0, None):
+        metrics["fcfMargin"] = fcf / revenue
+
+    # Harmonisierung/Backfills für Scoring:
+    # trailingPE-Fallback (falls peRatio leer): yfinance nutzt trailingPE -> oben schon 'peRatio'
+    if "peRatio" not in metrics and isinstance(info.get("trailingPE"), (int, float)):
+        metrics["peRatio"] = float(info["trailingPE"])
+
+    # earningsGrowth als epsGrowth-Alias falls benötigt
+    if "epsGrowth" not in metrics and isinstance(metrics.get("earningsGrowth"), float):
+        metrics["epsGrowth"] = metrics["earningsGrowth"]
 
     return metrics
 

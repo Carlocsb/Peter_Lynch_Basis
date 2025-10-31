@@ -1,20 +1,20 @@
-# pages/Top_10_Kategorien.py
-import os
-import sys
-import pandas as pd
-import streamlit as st
+# pages/Top_10_Kategorien.py (ganz oben)
 
-# === 🔧 Pfad zur src-Ebene hinzufügen ===
+import os, sys, pandas as pd, streamlit as st
+import importlib
+
+# Pfad zur src-Ebene
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-# === Funktionen aus src/funktionen importieren ===
-from src.funktionen import (
-    get_es_connection,
-    load_data_from_es,
-    score_row
-)
+# Modul laden & sicher neu laden
+from src import lynch_criteria
+importlib.reload(lynch_criteria)
+CATEGORIES = lynch_criteria.CATEGORIES  # <-- NUR HIER holen
+
+from src.funktionen import get_es_connection, load_data_from_es, score_row
+
 
 # === 1️⃣ Setup ===
 st.set_page_config(page_title="Top 10 Aktien je Peter-Lynch-Kategorie", layout="wide")
@@ -30,54 +30,65 @@ if df.empty:
     st.warning("⚠️ Keine Daten in Elasticsearch gefunden. Bitte ingest_yf ausführen.")
     st.stop()
 
-# === 3️⃣ Lynch-Kriterien ===
-CRITERIA = {
-    "Slow Growers": [
-        ("eps", "EPS < 5 (langsames Wachstum)", lambda x: x < 5, False),
-        ("dividendYield", "3–9 % Dividende", lambda x: 0.03 <= x <= 0.09, False),
-        ("peRatio", "KGV < 15", lambda x: x < 15, False),
-        ("priceToBook", "P/B < 2.5", lambda x: x < 2.5, True),
-        ("marketCap", "> 10 Mrd USD", lambda x: x > 10, False),
-    ],
-    "Stalwarts": [
-        ("eps", "5–10 EPS", lambda x: 5 <= x <= 10, False),
-        ("dividendYield", "≥ 2 % Dividende", lambda x: x >= 0.02, False),
-        ("peRatio", "KGV < 25", lambda x: x < 25, False),
-        ("marketCap", "> 50 Mrd USD", lambda x: x > 50, False),
-        ("bookValuePerShare", "> 10 USD Buchwert", lambda x: x > 10, True),
-    ],
-    "Fast Growers": [
-        ("eps", "EPS > 10", lambda x: x > 10, False),
-        ("pegRatio", "PEG < 1", lambda x: x < 1, False),
-        ("peRatio", "KGV < 25", lambda x: x < 25, False),
-        ("priceToBook", "P/B < 4", lambda x: x < 4, True),
-        ("revenueGrowth", "> 0.1 Umsatzwachstum", lambda x: x > 0.1, False),
-    ],
-    "Cyclicals": [
-        ("eps", "EPS > 0", lambda x: x > 0, False),
-        ("peRatio", "KGV < 25", lambda x: x < 25, False),
-        ("marketCap", "> 10 Mrd USD", lambda x: x > 10, False),
-        ("freeCashFlow", "positiver FCF", lambda x: x > 0, False),
-    ],
-    "Turnarounds": [
-        ("eps", "EPS > 0", lambda x: x > 0, False),
-        ("bookValuePerShare", "> 10 USD Buchwert", lambda x: x > 10, False),
-        ("peRatio", "KGV < 20", lambda x: x < 20, False),
-        ("totalDebt", "< 20 Mrd USD Schulden", lambda x: x < 20000, False),
-        ("cashPerShare", "> 5 USD Cash/Aktie", lambda x: x > 5, True),
-    ],
-    "Asset Plays": [
-        ("bookValuePerShare", "≥ 20 USD Buchwert", lambda x: x >= 20, False),
-        ("priceToBook", "< 1.5 P/B", lambda x: x < 1.5, False),
-        ("peRatio", "< 20 KGV", lambda x: x < 20, False),
-        ("marketCap", "< 10 Mrd USD", lambda x: x < 10, True),
-        ("cashPerShare", "> 5 USD Cash/Aktie", lambda x: x > 5, True),
-    ],
-}
+def make_criteria_with_labels():
+    """
+    Nimmt die Regeln aus CATEGORIES (2er- oder 4er-Tupel) und ergänzt nur ein hübsches Label.
+    Anzahl/Logik der Regeln bleiben 1:1 bestehen, damit z.B. Slow Growers = 6 Regeln hat.
+    """
+    # optionale Feld-Aliasse: was in CATEGORIES steht -> wie es im DataFrame heißt
+    FIELD_ALIAS = {
+        "trailingPE": "peRatio",   # wir lesen peRatio aus ES
+    }
+
+    # deutsche Labels pro Feld (fallback = Feldname)
+    LABEL_MAP = {
+        "earningsGrowth":   "Gewinnwachstum",
+        "epsGrowth":        "EPS-Wachstum",
+        "eps":              "EPS",
+        "dividendYield":    "Dividendenrendite",
+        "payoutRatio":      "Payout Ratio",
+        "revenueGrowth":    "Umsatzwachstum",
+        "peRatio":          "KGV",
+        "priceToBook":      "P/B",
+        "marketCap":        "Marktkapitalisierung",
+        "freeCashFlow":     "Free Cash Flow",
+        "freeCashFlowPerShare": "FCF/Aktie",
+        "debtToAssets":     "Debt/Assets",
+        "cashPerShare":     "Cash/Aktie",
+        "bookValuePerShare":"Buchwert/Aktie",
+        "totalDebt":        "Gesamtschulden",
+        "sector":           "Sektor",
+    }
+
+    labeled = {}
+    for cat, rules in CATEGORIES.items():
+        augmented = []
+        for item in rules:
+            # CATEGORIES kann (feld, regel) ODER (feld, label, regel, optional) enthalten
+            if len(item) == 2:
+                field, rule = item
+                optional = False
+                label_text = LABEL_MAP.get(field, field)
+            else:
+                field, label_text_in, rule, optional = item
+                label_text = label_text_in or LABEL_MAP.get(field, field)
+
+            # Alias anwenden, damit wir sicher die Spalte im df treffen
+            used_field = FIELD_ALIAS.get(field, field)
+
+            augmented.append((used_field, label_text, rule, optional))
+        labeled[cat] = augmented
+    return labeled
+
+
+
 
 # === 4️⃣ Kategorie-Auswahl ===
+CRITERIA = make_criteria_with_labels()
 kategorie = st.selectbox("Kategorie wählen:", list(CRITERIA.keys()))
 criteria = CRITERIA[kategorie]
+
+
 
 # === 5️⃣ Filter: Branche / MarketCap / Datum ===
 st.sidebar.header("🔍 Filter")
@@ -89,23 +100,22 @@ if "industry" in df.columns:
         df = df[df["industry"] == selected_industry]
 
 if "marketCap" in df.columns:
-    min_cap, max_cap = float(df["marketCap"].min()), float(df["marketCap"].max())
+    # In Milliarden USD umrechnen
+    df["marketCap_Mrd"] = df["marketCap"] / 1e9
+    min_cap, max_cap = df["marketCap_Mrd"].min(), df["marketCap_Mrd"].max()
+
     cap_range = st.sidebar.slider(
         "Marktkapitalisierung (in Mrd USD)",
         min_value=round(min_cap, 1),
         max_value=round(max_cap, 1),
         value=(round(min_cap, 1), round(max_cap, 1)),
+        step=10.0
     )
-    df = df[(df["marketCap"] >= cap_range[0]) & (df["marketCap"] <= cap_range[1])]
 
-if "date" in df.columns:
-    available_dates = sorted(df["date"].unique(), reverse=True)
-    selected_date = st.sidebar.selectbox("Datum wählen", ["Neuestes"] + available_dates)
-    if selected_date != "Neuestes":
-        df = df[df["date"] == selected_date]
-    else:
-        latest_date = max(df["date"])
-        df = df[df["date"] == latest_date]
+    # Nach Auswahl filtern (in Milliarden!)
+    df = df[(df["marketCap_Mrd"] >= cap_range[0]) & (df["marketCap_Mrd"] <= cap_range[1])]
+
+
 
 # === 6️⃣ Bewertung (zentral via score_row) ===
 def evaluate_stock(row, criteria):
@@ -135,11 +145,29 @@ df["Score"] = [s[0] for s in scores]
 df["MaxScore"] = [s[1] for s in scores]
 df["Score %"] = (df["Score"] / df["MaxScore"] * 100).round(1)
 df["Details"] = [s[2] for s in scores]
-df = df.sort_values("Score %", ascending=False).reset_index(drop=True)
+
+df = df.sort_values(
+    by=["Score %", "marketCap"],
+    ascending=[False, False]
+).reset_index(drop=True)
+
+# MarketCap in Milliarden USD umrechnen und formatieren
+df["MarketCap (Mrd USD)"] = (df["marketCap"] / 1e9).round(1)
 
 # === 7️⃣ Anzeige ===
 st.markdown(f"### 📈 Ranking – {kategorie}")
-st.dataframe(df[["symbol", "marketCap", "Score", "MaxScore", "Score %"]].head(10), use_container_width=True)
+st.dataframe(
+    df[["symbol", "MarketCap (Mrd USD)", "Score", "MaxScore", "Score %"]].head(10)
+      .style.format({
+          "MarketCap (Mrd USD)": "{:,.1f}",
+          "Score %": "{:.0f} %",
+      }),
+    use_container_width=True
+)
+
+
+
+
 
 aktie = st.selectbox("Wähle eine Aktie für Details:", df["symbol"].head(10))
 row = df[df["symbol"] == aktie].iloc[0]
