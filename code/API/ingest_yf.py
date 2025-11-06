@@ -130,6 +130,34 @@ def get_metrics(symbol: str) -> Dict:
     if "epsGrowth" not in metrics and isinstance(metrics.get("earningsGrowth"), float):
         metrics["epsGrowth"] = metrics["earningsGrowth"]
 
+    # --- Aliasse für Kategorien ---
+    if "peRatio" in metrics and "trailingPE" not in metrics:
+        metrics["trailingPE"] = metrics["peRatio"]
+
+    if "freeCashflow" in metrics and "freeCashFlow" not in metrics:
+        metrics["freeCashFlow"] = metrics["freeCashflow"]
+
+    # --- Debt/Assets (für mehrere Kategorien) ---
+    if isinstance(total_debt, float) and isinstance(total_assets, float) and total_assets:
+        metrics["debtToAssets"] = total_debt / total_assets
+
+    # --- Sektor normalisieren (für Cyclicals) ---
+    def _norm_sector(s: str) -> str:
+        m = {
+            "consumer cyclical": "cyclical",
+            "consumer discretionary": "cyclical",
+            "industrials": "cyclical",
+            "materials": "basic materials",
+            "energy": "energy",
+            "automotive": "auto",
+            "automobiles & components": "auto",
+        }
+        return m.get(str(s).strip().lower(), str(s).strip().lower())
+    
+
+    if isinstance(metrics.get("sector"), str):
+        metrics["sector"] = _norm_sector(metrics["sector"])
+        
     return metrics
 
 # === 5️⃣ Dokument aufbauen ===

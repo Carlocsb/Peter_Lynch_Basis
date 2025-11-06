@@ -51,217 +51,200 @@ def fetch_earnings(symbol: str) -> Dict:
     # reportedEPS je Quartal/Jahr (für EPS-/Earnings-Growth)
     return av_get({"function": "EARNINGS", "symbol": symbol})
 
-def latest_quarter_value(arr: List[Dict], key: str):
-    """Nimmt das jüngste Quartal; AV liefert bereits neu -> alt."""
-    if not arr:
-        return None
-    v = arr[0].get(key)
+# === Helper 
+def _f(x):
     try:
-        return float(v)
-    except Exception:
-        return None
-
-def yoy_growth(latest: float, prev_year: float):
-    try:
-        if prev_year in (None, 0):
-            return None
-        return (latest - prev_year) / abs(prev_year)
+        if x is None: return None
+        if isinstance(x, (int, float)): return float(x)
+        return float(str(x).replace(",", ""))
     except Exception:
         return None
 
 def build_metrics(symbol: str) -> Dict:
-    """
-    Mapped AV-Felder auf deine ES-Feldnamen.
-    Nutzt:
-    - OVERVIEW: PE, PB, DividendYield, PayoutRatio, MarketCap, SharesOutstanding, Sector/Industry
-    - Quartalsstatements: Debt/Assets, Cash/Share, FCF, FCF/Share, Current Ratio
-    - EARNINGS: EPS (Quartal) für YoY EPS/Earnings Growth
-    - INCOME: Revenue (Quartal) für YoY Revenue Growth + SG&A-Quote (Trend)
-    """
     ov  = fetch_overview(symbol)
     inc = fetch_income(symbol)
     bal = fetch_balance(symbol)
     cfs = fetch_cashflow(symbol)
     ern = fetch_earnings(symbol)
 
-    # --- overview (aktuell)
-    def to_float(x):
-        try: return float(x)
-        except: return None
-
-    marketCap     = to_float(ov.get("MarketCapitalization"))
-    peRatio       = to_float(ov.get("PERatio"))
-    priceToBook   = to_float(ov.get("PriceToBookRatio"))
-    payoutRatio   = to_float(ov.get("PayoutRatio"))
-    dividendYield = to_float(ov.get("DividendYield"))
+    # ---- OVERVIEW (aktuell) -> direkte Mappings auf YF-Namen ----
+    marketCap     = _f(ov.get("MarketCapitalization"))
+    peRatio       = _f(ov.get("PERatio"))
+    priceToBook   = _f(ov.get("PriceToBookRatio"))
+    payoutRatio   = _f(ov.get("PayoutRatio"))
+    dividendYield = _f(ov.get("DividendYield"))
     sector        = ov.get("Sector")
     industry      = ov.get("Industry")
-    shares_out    = to_float(ov.get("SharesOutstanding"))
+    beta          = _f(ov.get("Beta"))
+    pegRatio      = _f(ov.get("PEGRatio"))
+    shares_out    = _f(ov.get("SharesOutstanding"))
+    trailingAnnualDividendRate = _f(ov.get("DividendPerShare"))  # ~ yfinance 'trailingAnnualDividendRate'
 
-    # --- Quartals-Arrays
+    # ---- Quartals-Arrays (neu -> alt, Index 0 = jüngstes) ----
     q_inc = inc.get("quarterlyReports", []) or []
     q_bal = bal.get("quarterlyReports", []) or []
     q_cfs = cfs.get("quarterlyReports", []) or []
 
-    # Helper für jüngsten Wert
     def qv(arr, key):
         if not arr: return None
-        v = arr[0].get(key)
-        try: return float(v)
-        except: return None
+        return _f(arr[0].get(key))
 
-    # Balance Sheet
-    total_assets = qv(q_bal, "totalAssets")
-    total_debt   = qv(q_bal, "totalLiabilities") or qv(q_bal, "shortLongTermDebtTotal")
-    total_cash   = qv(q_bal, "cashAndCashEquivalentsAtCarryingValue")
-    total_equity = qv(q_bal, "totalShareholderEquity")
-    cur_assets   = qv(q_bal, "totalCurrentAssets")
-    cur_liab     = qv(q_bal, "totalCurrentLiabilities")
-
-    # Current Ratio
-    currentRatio = None
-    if isinstance(cur_assets, float) and isinstance(cur_liab, float) and cur_liab:
-        currentRatio = cur_assets / cur_liab
-
-    # Cashflow → FCF (OCF - CapEx)
-    ocf   = qv(q_cfs, "operatingCashflow")
-    capex = qv(q_cfs, "capitalExpenditures")
-    freeCashflow = None
-    if isinstance(ocf, float) and isinstance(capex, float):
-        freeCashflow = ocf - abs(capex)
-    freeCashFlowPerShare = None
-    if isinstance(freeCashflow, float) and isinstance(shares_out, float) and shares_out:
-        freeCashFlowPerShare = freeCashflow / shares_out
-
-    # Debt/Assets, Equity/Assets, Cash/Debt
-    debtToAssets = None
-    if isinstance(total_debt, float) and isinstance(total_assets, float) and total_assets:
-        debtToAssets = total_debt / total_assets
-    equityRatio = None
-    if isinstance(total_equity, float) and isinstance(total_assets, float) and total_assets:
-        equityRatio = total_equity / total_assets
-    cashToDebt = None
-    if isinstance(total_cash, float) and isinstance(total_debt, float) and total_debt:
-        cashToDebt = total_cash / total_debt
+    # === INCOME (Quartal) ===
+    revenue    = qv(q_inc, "totalRevenue")
+    net_income = qv(q_inc, "netIncome")
+    profitMargin = (net_income / revenue) if isinstance(net_income, float) and isinstance(revenue, float) and revenue else None
 
     # YoY Revenue Growth (Vorjahresquartal ~ Index 4)
     revenueGrowth = None
     try:
         if len(q_inc) >= 5:
-            rev_latest = float(q_inc[0]["totalRevenue"])
-            rev_prev_y = float(q_inc[4]["totalRevenue"])
-            revenueGrowth = yoy_growth(rev_latest, rev_prev_y)
+            rev_latest = _f(q_inc[0].get("totalRevenue"))
+            rev_prev_y = _f(q_inc[4].get("totalRevenue"))
+            if isinstance(rev_latest, float) and isinstance(rev_prev_y, float) and rev_prev_y:
+                revenueGrowth = (rev_latest - rev_prev_y) / abs(rev_prev_y)
     except Exception:
         pass
 
-    # EPS/Earnings Growth (YoY) via EARNINGS
-    earningsGrowth = None
-    epsGrowth = None
+    # === SG&A TREND (rückläufige Quote) ===
+    def _sga_val(rec):
+        # AV nutzt teils unterschiedliche Keys – versuche mehrere Varianten.
+        for k in (
+            "sellingGeneralAdministrative",
+            "sellingGeneralAndAdministrative",
+            "sellingGeneralAndAdministration",
+            "sellingGeneralAndAdmin",
+        ):
+            v = rec.get(k)
+            if v is not None:
+                return _f(v)
+        return None
+
+    sgaTrend = None
+    try:
+        # Baue die letzten bis zu 4 SG&A-Quoten (Quartal 0..3)
+        ratios = []
+        for i in range(min(4, len(q_inc))):
+            sga_i = _sga_val(q_inc[i])
+            rev_i = _f(q_inc[i].get("totalRevenue"))
+            if isinstance(sga_i, float) and isinstance(rev_i, float) and rev_i:
+                ratios.append(sga_i / rev_i)
+
+        if len(ratios) >= 3:
+            # Kriterium: klar abnehmender Verlauf ODER jüngste Quote unter dem Durchschnitt der Vorperioden
+            monotonic_down = ratios[0] <= ratios[1] <= (ratios[2] if len(ratios) > 2 else ratios[1])
+            last_below_mean_prev = ratios[0] < (sum(ratios[1:]) / len(ratios[1:]))
+            sgaTrend = bool(monotonic_down or last_below_mean_prev)
+        elif len(ratios) == 2:
+            sgaTrend = bool(ratios[0] <= ratios[1])
+        else:
+            sgaTrend = None
+    except Exception:
+        sgaTrend = None
+
+    # === BALANCE (Quartal) ===
+    totalAssets  = qv(q_bal, "totalAssets")
+    total_equity = qv(q_bal, "totalShareholderEquity")
+    totalCash    = qv(q_bal, "cashAndCashEquivalentsAtCarryingValue") or qv(q_bal, "cashAndCashEquivalents")
+    cur_assets   = qv(q_bal, "totalCurrentAssets")
+    cur_liab     = qv(q_bal, "totalCurrentLiabilities")
+    inventory    = qv(q_bal, "inventory")
+
+    # totalDebt: bevorzugt long + short (Fallback: shortLongTermDebtTotal)
+    long_debt  = qv(q_bal, "longTermDebt")
+    short_debt = qv(q_bal, "shortTermDebt")
+    sld_total  = qv(q_bal, "shortLongTermDebtTotal")
+    if isinstance(long_debt, float) or isinstance(short_debt, float):
+        totalDebt = (long_debt or 0.0) + (short_debt or 0.0)
+    else:
+        totalDebt = sld_total  # kann None sein
+
+    currentRatio = (cur_assets / cur_liab) if isinstance(cur_assets, float) and isinstance(cur_liab, float) and cur_liab else None
+    quickRatio   = None
+    if isinstance(cur_assets, float) and isinstance(inventory, float) and isinstance(cur_liab, float) and cur_liab:
+        quickRatio = (cur_assets - inventory) / cur_liab
+
+    debtToEquity = (totalDebt / total_equity) if isinstance(totalDebt, float) and isinstance(total_equity, float) and total_equity else None
+    debtToAssets = (totalDebt / totalAssets) if isinstance(totalDebt, float) and isinstance(totalAssets, float) and totalAssets else None  # <-- NEU
+
+    # === CASHFLOW (Quartal) -> Free Cash Flow (OCF - CapEx) ===
+    ocf   = qv(q_cfs, "operatingCashflow") or qv(q_cfs, "operatingCashFlow")
+    capex = qv(q_cfs, "capitalExpenditures") or qv(q_cfs, "capitalExpenditure")
+    freeCashflow = (ocf - abs(capex)) if isinstance(ocf, float) and isinstance(capex, float) else None
+    cashPerShare = (totalCash / shares_out) if isinstance(totalCash, float) and isinstance(shares_out, float) and shares_out else None
+    freeCashFlowPerShare = (freeCashflow / shares_out) if isinstance(freeCashflow, float) and isinstance(shares_out, float) and shares_out else None
+
+    # Abgeleitet wie in ingest_yf
+    cashToDebt  = (totalCash / totalDebt) if isinstance(totalCash, float) and isinstance(totalDebt, float) and totalDebt else None
+    equityRatio = (total_equity / totalAssets) if isinstance(total_equity, float) and isinstance(totalAssets, float) and totalAssets else None
+    fcfMargin   = (freeCashflow / revenue) if isinstance(freeCashflow, float) and isinstance(revenue, float) and revenue else None
+
+    # === EARNINGS (Quartal) -> epsGrowth/earningsGrowth YoY ===
+    epsGrowth = earningsGrowth = None
     try:
         q_ern = ern.get("quarterlyEarnings", []) or []
         if len(q_ern) >= 5:
-            eps_latest = float(q_ern[0]["reportedEPS"])
-            eps_prev_y = float(q_ern[4]["reportedEPS"])
-            epsGrowth = yoy_growth(eps_latest, eps_prev_y)
-            earningsGrowth = epsGrowth  # Alias
+            eps_latest = _f(q_ern[0].get("reportedEPS"))
+            eps_prev_y = _f(q_ern[4].get("reportedEPS"))
+            if isinstance(eps_latest, float) and isinstance(eps_prev_y, float) and eps_prev_y:
+                epsGrowth = (eps_latest - eps_prev_y) / abs(eps_prev_y)
+                earningsGrowth = epsGrowth  # Alias wie bei yfinance
     except Exception:
         pass
 
-    # SG&A-Trend (Quote ggü. Vorquartal gefallen?)
-    sgaTrend = None
-    try:
-        if len(q_inc) >= 2:
-            def safe(x):
-                try: return float(x)
-                except: return None
-            rev0 = safe(q_inc[0].get("totalRevenue"))
-            rev1 = safe(q_inc[1].get("totalRevenue"))
-            sga0 = safe(q_inc[0].get("sellingGeneralAdministrative")) or safe(q_inc[0].get("sellingGeneralAdministrativeExpenses"))
-            sga1 = safe(q_inc[1].get("sellingGeneralAdministrative")) or safe(q_inc[1].get("sellingGeneralAdministrativeExpenses"))
-            if all(isinstance(v, float) and v for v in [rev0, rev1, sga0, sga1]):
-                q0 = sga0 / rev0
-                q1 = sga1 / rev1
-                sgaTrend = (q0 < q1)  # True, wenn Quote gefallen ist
-    except Exception:
-        pass
+    # Buchwert/Aktie (falls nicht direkt geliefert)
+    bookValuePerShare = None
+    if isinstance(total_equity, float) and isinstance(shares_out, float) and shares_out:
+        bookValuePerShare = total_equity / shares_out
 
-    # Cash per Share
-    cashPerShare = None
-    if isinstance(total_cash, float) and isinstance(shares_out, float) and shares_out:
-        cashPerShare = total_cash / shares_out
+    # trailing EPS (wie yfinance 'trailingEps') hat AV nicht 1:1 → optional None
+    eps = None
 
+    # === Metriken (inkl. Aliasse zu deinen CATEGORIES) ===
     metrics = {
         "marketCap": marketCap,
         "peRatio": peRatio,
+        "trailingPE": peRatio,                  # <-- Alias für deine Regeln
         "priceToBook": priceToBook,
-        "payoutRatio": payoutRatio,
         "dividendYield": dividendYield,
+        "payoutRatio": payoutRatio,
         "sector": sector,
         "industry": industry,
+        "beta": beta,
+        "pegRatio": pegRatio,
+        "trailingAnnualDividendRate": trailingAnnualDividendRate,
+
+        "revenue": revenue,
+        "profitMargin": profitMargin,
+        "revenueGrowth": revenueGrowth,
+
+        "totalAssets": totalAssets,
+        "totalDebt": totalDebt,
+        "totalCash": totalCash,
+        "totalStockholderEquity": total_equity,
+        "sharesOutstanding": shares_out,
+
+        "currentRatio": currentRatio,
+        "quickRatio": quickRatio,
+        "debtToEquity": debtToEquity,
+        "debtToAssets": debtToAssets,           # <-- NEU
 
         "freeCashflow": freeCashflow,
-        "freeCashFlowPerShare": freeCashFlowPerShare,
+        "freeCashFlow": freeCashflow,           # <-- Alias exakt wie in CATEGORIES
         "cashPerShare": cashPerShare,
+        "freeCashFlowPerShare": freeCashFlowPerShare,
 
-        "debtToAssets": debtToAssets,
-        "equityRatio": equityRatio,
+        # abgeleitet wie yfinance
         "cashToDebt": cashToDebt,
-        "currentRatio": currentRatio,
-
-        "revenueGrowth": revenueGrowth,
+        "equityRatio": equityRatio,
+        "fcfMargin": fcfMargin,
         "earningsGrowth": earningsGrowth,
         "epsGrowth": epsGrowth,
-        "sgaTrend": sgaTrend,
+
+        "bookValuePerShare": bookValuePerShare,
+        "eps": eps,  # optional None
+
+        "sgaTrend": sgaTrend,                   # <-- NEU (Turnaround-Signal)
     }
 
-    # Nur nicht-None-Felder zurückgeben
+    # Nur nicht-None Felder zurückgeben
     return {k: v for k, v in metrics.items() if v is not None}
-
-def build_doc(symbol: str, metrics: Dict) -> Dict:
-    today = str(datetime.now(UTC).date())
-    return {
-        "_index": ES_INDEX,
-        "_id": f"{symbol}|{today}|av",
-        "_source": {
-            "symbol": symbol,
-            "date": today,
-            "source": "alphavantage",
-            "ingested_at": datetime.now(UTC).isoformat(),
-            **metrics
-        },
-    }
-
-def run():
-    print(es_healthcheck(es))
-    ensure_index(es, ES_INDEX)
-
-    symbols = load_symbols()
-    random.shuffle(symbols)
-
-    buffer, written = [], 0
-    for i, sym in enumerate(symbols, 1):
-        try:
-            metrics = build_metrics(sym)
-            if not metrics:
-                continue
-            buffer.append(build_doc(sym, metrics))
-
-            if len(buffer) >= 25:
-                helpers.bulk(es, buffer)
-                written += len(buffer)
-                buffer.clear()
-                print(f"[{i}/{len(symbols)}] {written} Dokumente gespeichert...")
-        except Exception as e:
-            print(f"[FEHLER] {sym}: {e}")
-
-        # Free-Tier Rate Limit: max 5 Requests / Minute
-        time.sleep(15)
-
-    if buffer:
-        helpers.bulk(es, buffer)
-        written += len(buffer)
-
-    print(f"✅ Fertig. Gesamt gespeichert: {written} Dokumente.")
-
-if __name__ == "__main__":
-    run()

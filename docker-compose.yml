@@ -54,6 +54,24 @@ services:
       - ./code/API:/app
     command: ["bash", "-c", "while true; do python /app/ingest_fmp.py; sleep 86400; done"]
 
+
+  ingest-fmp-sp:
+    build:
+      context: .
+      dockerfile: Dockerfile-ingest
+    container_name: ingest-fmp-sp
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200   # 👈 wichtig
+      - ELASTICSEARCH_INDEX=stocks
+    volumes:
+      - ./code:/app/code
+      - ./data:/app/data
+    command: ["bash", "-c", "python /app/code/API/ingest_fmp_sp.py"]
+
+
   # 🔹 Data-Ingestion Backend (Yahoo Finance)
   ingest_yf:
     build:

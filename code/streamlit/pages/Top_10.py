@@ -1,4 +1,4 @@
-# pages/Top_10_Kategorien.py (ganz oben)
+# pages/Top_10_Kategorien.py
 
 import os, sys, pandas as pd, streamlit as st
 import importlib
@@ -11,10 +11,14 @@ if parent_dir not in sys.path:
 # Modul laden & sicher neu laden
 from src import lynch_criteria
 importlib.reload(lynch_criteria)
-CATEGORIES = lynch_criteria.CATEGORIES  # <-- NUR HIER holen
+CATEGORIES = lynch_criteria.CATEGORIES  # <-- nur hier holen
 
-from src.funktionen import get_es_connection, load_data_from_es, score_row
-
+from src.funktionen import (
+    get_es_connection,
+    load_data_from_es,
+    score_row,
+    render_source_selector,   # << Neu: Datenquellen-Umschalter
+)
 
 # === 1️⃣ Setup ===
 st.set_page_config(page_title="Top 10 Aktien je Peter-Lynch-Kategorie", layout="wide")
@@ -24,16 +28,22 @@ st.markdown("*(Daten live aus Elasticsearch – bewertet nach Lynch-Kriterien)*"
 
 # === 2️⃣ Verbindung & Daten ===
 es = get_es_connection()
-df = load_data_from_es(es)
+source_mode = render_source_selector()          # << Neu
+df = load_data_from_es(es, source_mode=source_mode)  # << Neu: Modus weitergeben
 
 if df.empty:
-    st.warning("⚠️ Keine Daten in Elasticsearch gefunden. Bitte ingest_yf ausführen.")
+    st.warning("⚠️ Keine Daten in Elasticsearch gefunden. Bitte Ingest laufen lassen.")
     st.stop()
+
+# Typen aufräumen (falls nötig)
+for col in ["marketCap", "peRatio"]:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
 def make_criteria_with_labels():
     """
     Nimmt die Regeln aus CATEGORIES (2er- oder 4er-Tupel) und ergänzt nur ein hübsches Label.
-    Anzahl/Logik der Regeln bleiben 1:1 bestehen, damit z.B. Slow Growers = 6 Regeln hat.
+    Anzahl/Logik der Regeln bleiben 1:1 bestehen.
     """
     # optionale Feld-Aliasse: was in CATEGORIES steht -> wie es im DataFrame heißt
     FIELD_ALIAS = {
@@ -51,6 +61,7 @@ def make_criteria_with_labels():
         "peRatio":          "KGV",
         "priceToBook":      "P/B",
         "marketCap":        "Marktkapitalisierung",
+        "freeCashflow":     "Free Cash Flow",
         "freeCashFlow":     "Free Cash Flow",
         "freeCashFlowPerShare": "FCF/Aktie",
         "debtToAssets":     "Debt/Assets",
@@ -80,17 +91,12 @@ def make_criteria_with_labels():
         labeled[cat] = augmented
     return labeled
 
-
-
-
 # === 4️⃣ Kategorie-Auswahl ===
 CRITERIA = make_criteria_with_labels()
 kategorie = st.selectbox("Kategorie wählen:", list(CRITERIA.keys()))
 criteria = CRITERIA[kategorie]
 
-
-
-# === 5️⃣ Filter: Branche / MarketCap / Datum ===
+# === 5️⃣ Filter: Branche / MarketCap ===
 st.sidebar.header("🔍 Filter")
 
 if "industry" in df.columns:
@@ -99,23 +105,19 @@ if "industry" in df.columns:
     if selected_industry != "Alle":
         df = df[df["industry"] == selected_industry]
 
-if "marketCap" in df.columns:
+if "marketCap" in df.columns and not df["marketCap"].dropna().empty:
     # In Milliarden USD umrechnen
     df["marketCap_Mrd"] = df["marketCap"] / 1e9
-    min_cap, max_cap = df["marketCap_Mrd"].min(), df["marketCap_Mrd"].max()
-
+    min_cap = float(df["marketCap_Mrd"].min())
+    max_cap = float(df["marketCap_Mrd"].max())
     cap_range = st.sidebar.slider(
         "Marktkapitalisierung (in Mrd USD)",
         min_value=round(min_cap, 1),
         max_value=round(max_cap, 1),
         value=(round(min_cap, 1), round(max_cap, 1)),
-        step=10.0
+        step=10.0 if (max_cap - min_cap) > 10 else 1.0
     )
-
-    # Nach Auswahl filtern (in Milliarden!)
     df = df[(df["marketCap_Mrd"] >= cap_range[0]) & (df["marketCap_Mrd"] <= cap_range[1])]
-
-
 
 # === 6️⃣ Bewertung (zentral via score_row) ===
 def evaluate_stock(row, criteria):
@@ -146,28 +148,29 @@ df["MaxScore"] = [s[1] for s in scores]
 df["Score %"] = (df["Score"] / df["MaxScore"] * 100).round(1)
 df["Details"] = [s[2] for s in scores]
 
-df = df.sort_values(
-    by=["Score %", "marketCap"],
-    ascending=[False, False]
-).reset_index(drop=True)
+sort_cols = ["Score %"]
+if "marketCap" in df.columns:
+    sort_cols.append("marketCap")
+df = df.sort_values(by=sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
 
-# MarketCap in Milliarden USD umrechnen und formatieren
-df["MarketCap (Mrd USD)"] = (df["marketCap"] / 1e9).round(1)
+# MarketCap in Milliarden USD umrechnen und formatieren (Anzeige)
+if "marketCap" in df.columns:
+    df["MarketCap (Mrd USD)"] = (df["marketCap"] / 1e9).round(1)
 
 # === 7️⃣ Anzeige ===
+st.caption(f"Quelle: {source_mode}")
 st.markdown(f"### 📈 Ranking – {kategorie}")
+cols_to_show = ["symbol", "Score", "MaxScore", "Score %"]
+if "MarketCap (Mrd USD)" in df.columns:
+    cols_to_show.insert(1, "MarketCap (Mrd USD)")
+
 st.dataframe(
-    df[["symbol", "MarketCap (Mrd USD)", "Score", "MaxScore", "Score %"]].head(10)
-      .style.format({
-          "MarketCap (Mrd USD)": "{:,.1f}",
-          "Score %": "{:.0f} %",
-      }),
+    df[cols_to_show].head(10).style.format({
+        "MarketCap (Mrd USD)": "{:,.1f}",
+        "Score %": "{:.0f} %",
+    }),
     use_container_width=True
 )
-
-
-
-
 
 aktie = st.selectbox("Wähle eine Aktie für Details:", df["symbol"].head(10))
 row = df[df["symbol"] == aktie].iloc[0]
@@ -179,10 +182,14 @@ for item in row["Details"]:
     icon = "✅" if item["Erfüllt"] else "❌"
     optional_tag = " *(optional)*" if item["Optional"] else ""
     val_disp = (
-        f"{item['Istwert']*100:.2f} %" if isinstance(item["Istwert"], (int, float)) and abs(item["Istwert"]) < 1 and "Ratio" not in item["Kennzahl"]
+        f"{item['Istwert']*100:.2f} %"
+        if isinstance(item["Istwert"], (int, float))
+           and pd.notna(item["Istwert"])
+           and abs(item["Istwert"]) < 1
+           and "Ratio" not in item["Kennzahl"]
         else item["Istwert"]
     )
     st.write(f"{icon} **{item['Kennzahl']}**{optional_tag} → **Ist:** {val_disp}")
 
 st.metric("Gesamtscore", f"{row['Score']} / {row['MaxScore']}", f"{row['Score %']} %")
-st.caption("Datenquelle: Elasticsearch (via yfinance) – bewertet nach Peter-Lynch-Kriterien.")
+st.caption("Datenquelle: Elasticsearch – bewertet nach Peter-Lynch-Kriterien.")

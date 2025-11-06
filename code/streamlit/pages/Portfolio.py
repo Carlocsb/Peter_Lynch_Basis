@@ -3,44 +3,48 @@ import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-import uuid  
+import uuid
 from src.lynch_criteria import CATEGORIES
 from src.funktionen import (
     get_es_connection, load_data_from_es, load_industries, score_row,
     ensure_portfolio_index, build_portfolio_doc, save_portfolio,
-    list_portfolios, load_portfolio, delete_portfolio
+    list_portfolios, load_portfolio, delete_portfolio,
+    render_source_selector,   # 👈 NEU: Datenquellen-Umschalter
 )
+
+# -------- Session-Seed für stabile Widget-Keys --------
 if "widget_seed" not in st.session_state:
     st.session_state["widget_seed"] = str(uuid.uuid4())
-# Pfad-Setup
+
+# Pfad-Setup (Pages → src importierbar machen)
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
+# === 1️⃣ Setup UI ===
 st.set_page_config(page_title="Portfolio-Erstellung", layout="wide")
 st.sidebar.image("assets/Logo-TH-Köln1.png")
 st.title("📁 Portfolio-Zusammenstellung nach Peter Lynch")
 
-
 SAVE_PATH = "portfolio_speichern.csv"
 
-# === 2️⃣ Verbindung & Daten ===
+# === 2️⃣ Verbindung & Datenquellen-Umschalter ===
 es = get_es_connection()
+source_mode = render_source_selector("📡 Datenquelle")          # 👈 Sidebar-Umschalter
 ensure_portfolio_index(es)
-df_industries = load_industries(es)
-df_stocks = load_data_from_es(es)
+
+# Daten laden – jeweils mit source_mode
+df_industries = load_industries(es, source_mode=source_mode)
+df_stocks = load_data_from_es(es, source_mode=source_mode)
 
 # 👇👇👇 HYDRATION: geladene Werte EINMALIG vor Widget-Erzeugung in den Session State schreiben
 if "hydrate_payload" in st.session_state:
     payload = st.session_state.pop("hydrate_payload")  # einmalig verwenden
-
     st.session_state["current_portfolio_id"] = payload.get("portfolio_id")
-    st.session_state["portfolio_name"]       = payload.get("portfolio_name", "")
-
+    st.session_state["portfolio_name"] = payload.get("portfolio_name", "")
     # Auswahl je Kategorie (für multiselect-Defaults)
     for cat, tickers in payload.get("auswahl", {}).items():
         st.session_state[f"ms_{cat}"] = list(dict.fromkeys(tickers))  # dedupe, Reihenfolge beibehalten
-
     # Beträge je Symbol (für number_input-Defaults)
     for cat, symvals in payload.get("betraege", {}).items():
         for sym, amt in symvals.items():
@@ -81,7 +85,7 @@ with col2:
     ax.axis("equal")
     st.pyplot(fig)
 
-# === 6️⃣ Top-Aktien je Kategorie ===
+# === 6️⃣ Top-Aktien je Kategorie (aus gewählter Quelle) ===
 top10_by_category = {}
 for cat_label in verteilung.keys():
     rules = CATEGORIES[ALIAS.get(cat_label, cat_label)]
@@ -166,9 +170,6 @@ with col_left:
 
 with col_right:
     st.subheader("📈 Aktuelle Portfolio-Zusammensetzung (nach Betrag)")
-    # ... (unverändert)
-
-
     # Summen je Kategorie & Gesamt
     sum_cat = {k: sum(betraege.get(k, {}).values()) for k in verteilung}
     total_amt = sum(sum_cat.values())
@@ -234,8 +235,7 @@ if load_clicked and selected_label != "—":
     p = vorhandene[idx]
     data = load_portfolio(es, p["id"])
     if data:
-        # 🚫 WICHTIG: NICHT direkt st.session_state[...] setzen (Widgets existieren schon)!
-        # Stattdessen Hydrations-Payload setzen und rerun auslösen.
+        # 🚫 Widgets existieren schon → Hydrations-Payload + rerun
         gespeicherte_auswahl = {}
         gespeicherte_betraege = {}
         for it in data.get("items", []):
@@ -277,7 +277,6 @@ if save_new_clicked:
         st.success(f'Portfolio "{doc.get("name","")}" gespeichert.')
         st.rerun()
 
-
 if update_clicked:
     pid = st.session_state.get("current_portfolio_id")
     if not pid:
@@ -296,7 +295,6 @@ if update_clicked:
         )
         save_portfolio(es, doc, portfolio_id=pid)
         st.success("Portfolio aktualisiert.")
-        # Kein Hydration nötig – aber ein sauberer Refresh schadet nicht
         st.rerun()
 
 if delete_clicked:
@@ -306,7 +304,6 @@ if delete_clicked:
     else:
         if delete_portfolio(es, pid):
             st.success("Portfolio gelöscht.")
-            # Nach dem Löschen alles leeren über Hydration
             st.session_state["hydrate_payload"] = {
                 "portfolio_id": None,
                 "portfolio_name": "",
