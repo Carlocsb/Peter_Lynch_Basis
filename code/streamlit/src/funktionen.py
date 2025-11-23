@@ -449,25 +449,31 @@ def score_row(row_or_dict, criteria):
     return score
 
 
-def berechne_peter_lynch_kategorie(daten: dict):
+def berechne_peter_lynch_kategorie(daten: dict, schwelle_gleichheit: float = 0.02):
     results = {}
     for cat, rules in CATEGORIES.items():
         score = score_row(daten, rules)
         max_rules = len(rules) if rules else 1
         results[cat] = score / max_rules
 
-    beste_kategorie = max(results, key=results.get)
-    trefferquote = round(results[beste_kategorie] * 100, 1)
+    # bester Score
+    best_score = max(results.values())
+    trefferquote = round(best_score * 100, 1)
 
-    if trefferquote < 70:
-        vergleich = "In den anderen Kategorien liegt die Übereinstimmung noch darunter."
-    elif trefferquote < 90:
-        vergleich = "Auch andere Kategorien zeigen eine gewisse Übereinstimmung, jedoch etwas geringer."
+    # Kategorien, die fast gleich gut passen
+    top_kategorien = [
+        cat for cat, s in results.items()
+        if best_score - s <= schwelle_gleichheit
+    ]
+
+    # Text für Anzeige: entweder eine Kategorie oder mehrere
+    if len(top_kategorien) == 1:
+        kategorien_text = top_kategorien[0]
+    elif len(top_kategorien) == 2:
+        kategorien_text = f"{top_kategorien[0]} oder {top_kategorien[1]}"
     else:
-        vergleich = "Diese Kategorie passt am besten und deutlich stärker als alle anderen."
-
-    return beste_kategorie, trefferquote, vergleich, results
-
+        kategorien_text = ", ".join(top_kategorien[:-1]) + f" oder {top_kategorien[-1]}"
+    return kategorien_text, trefferquote
 
 def erklaere_kategorie(kategorie: str) -> str:
     texte = {

@@ -49,20 +49,52 @@ def ensure_index(es: Elasticsearch, index_name: str):
     body = {
         "settings": {"number_of_shards": 1, "number_of_replicas": 0},
         "mappings": {
-            "properties": {
-                "symbol": {"type": "keyword"},
-                "date": {"type": "date"},
-                "source": {"type": "keyword"},
-                "ingested_at": {"type": "date"},
-                "peRatio": {"type": "double"},
-                "bookValuePerShare": {"type": "double"},
-                "dividendYield": {"type": "double"},
-                "priceToBook": {"type": "double"},
-                "eps": {"type": "double"},
-                "marketCap": {"type": "double"},
-            }
-        },
+        "properties": {
+        "symbol": {"type": "keyword"},
+        "date": {"type": "date"},
+        "source": {"type": "keyword"},
+        "ingested_at": {"type": "date"},
+
+        # Zahlen
+        "peRatio": {"type": "double"},
+        "priceToBook": {"type": "double"},
+        "eps": {"type": "double"},
+        "dividendYield": {"type": "double"},
+        "marketCap": {"type": "double"},
+        "bookValuePerShare": {"type": "double"},
+        "freeCashflow": {"type": "double"},
+        "revenue": {"type": "double"},
+        "totalDebt": {"type": "double"},
+        "totalAssets": {"type": "double"},
+        "beta": {"type": "double"},
+        "pegRatio": {"type": "double"},
+        "payoutRatio": {"type": "double"},
+        "cashPerShare": {"type": "double"},
+        "revenueGrowth": {"type": "double"},
+        "profitMargin": {"type": "double"},
+        "debtToEquity": {"type": "double"},
+        "quickRatio": {"type": "double"},
+        "currentRatio": {"type": "double"},
+        "earningsGrowth": {"type": "double"},
+        "totalCash": {"type": "double"},
+        "sharesOutstanding": {"type": "double"},
+        "totalStockholderEquity": {"type": "double"},
+        # Abgeleitete
+        "cashToDebt": {"type": "double"},
+        "equityRatio": {"type": "double"},
+        "freeCashFlowPerShare": {"type": "double"},
+        "fcfMargin": {"type": "double"},
+        "debtToAssets": {"type": "double"},
+
+        # Strings als keyword
+        "sector": {"type": "keyword"},
+        "industry": {"type": "keyword"}
     }
+    }
+
+        }
+        
+
 
     try:
         es.indices.create(index=index_name, body=body)

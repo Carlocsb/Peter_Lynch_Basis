@@ -9,12 +9,11 @@
 - [4. Systemarchitektur](#4-systemarchitektur)
 - [5. Datenquellen und API-Abruf](#5-datenquellen-und-api-abruf)
 - [6. Datenmodell und Elasticsearch-Mapping](#6-datenmodell-und-elasticsearch-mapping)
-- [7. Implementierung (Code-Auszüge)](#7-implementierung-code-auszüge)
-- [8. Streamlit-Dashboard](#8-streamlit-dashboard)
-- [9. Setup & Deployment](#9-setup--deployment)
-- [10. Geplante Erweiterungen](#10-geplante-erweiterungen)
-- [11. Fazit](#11-fazit)
-- [12. Quellen](#12-quellen)
+- [7. Streamlit-Dashboard](#7-streamlit-dashboard)
+- [8. Setup & Deployment](#8-setup--deployment)
+- [9. Geplante Erweiterungen](#9-geplante-erweiterungen)
+- [10. Fazit](#10-fazit)
+- [11. Quellen](#11-quellen)
 
 ---
 
@@ -27,18 +26,12 @@ Dieses Praxisprojekt verfolgt das Ziel, fundamentale Unternehmensdaten automatis
 ### 1.2 Projektziel  
 Ziel ist der Aufbau einer durchgängigen Datenpipeline, die:
 
-1. Kennzahlen zu allen S&P-500-Aktien automatisiert über APIs abruft  
+1. Kennzahlen zu allen Aktien die mal einer der S&P-500-Aktien sind/wahren automatisiert über APIs abruft  
 2. Sie in Elasticsearch strukturiert speichert  
 3. Sie anhand der 6 Lynch-Kategorien klassifiziert  
 4. Über ein Streamlit-Dashboard filter-, vergleich- und visualisierbar macht  
 5. Grundlage für tägliche Updates, Alerts, Backtesting und ML-Erweiterungen bildet  
 
-### 1.3 Abgrenzung  
-- Keine Echtzeit-Kursdaten, nur Fundamentaldaten  
-- Keine Handels- oder Orderfunktion (kein Trading-Bot)  
-- Fokus: **Technische Analyseumgebung**, nicht Finanzberatung  
-
----
 
 ## 2. Bezug zum WI-Projekt
 
@@ -111,101 +104,154 @@ Die vollständige Theorie → siehe WI-Projekt.
 
 ---
 
-## 5. Datenquellen und API-Abruf
+## 5. Datenquellen & API-Abruf
 
-### 5.1 APIs im Einsatz
+Dieser Abschnitt beschreibt, **woher** die Daten stammen und **wie** sie technisch in das System geladen werden – noch ohne Bezug auf das Elasticsearch-Datenmodell.
 
-| API | Zweck | Beispiel-Endpunkt |
-|-----|-------|-------------------|
-| FMP | Fundamentaldaten | `/key-metrics-ttm` |
-| yfinance | Bilanz- & Marktdaten | `ticker.info` |
-| Alpha Vantage | EPS-Historie | `EARNINGS` |
+| Quelle | Skript | Typische Felder (roh) | API-Endpunkt / Methode |
+|--------|--------|------------------------|------------------------|
+| FMP (FinancialModelingPrep) | `ingest_fmp.py` | `peRatio`, `priceToBook`, `marketCap`, `dividendYield` | `/api/v3/quote/{symbol}` |
+| yfinance | `ingest_yf.py` | `trailingPE`, `freeCashFlow`, `beta`, `sharesOutstanding` | `Ticker.info`, `balance_sheet`, `cashflow` |
+| Alpha Vantage | `Ingest_AV.py` | EPS-Historie, SG&A-Daten | `EARNINGS`, `INCOME_STATEMENT` |
+| FMP JSON-Batch (offline) | `ingest_fmp_sp.py` | kompletter Fundamentaldatenblock | lokale JSON-Dateien |
+
+➡️ In diesem Abschnitt keine Feldtypen, kein Mapping, keine Normalisierung.
 
 ### 5.2 Beispiel-Response (FMP)
 
-    ```json
     {
     "symbol": "AAPL",
     "peRatioTTM": 28.31,
     "revenuePerShareTTM": 24.52,
     "dividendYieldTTM": 0.0059
     }
+
+## 6. Datenmodell und Elasticsearch-Mapping
+    Dieser Abschnitt beschreibt, wie die eingehenden Daten anschließend strukturiert und vereinheitlicht im Elasticsearch-Index gespeichert werden.  
+    Indexname: stocks   
+    Dokument-ID: SYMBOL |YYYY-MM-DD|  (z. B. AAPL|2025-11-06)
+
+### 6.1 Einheitliche Zielfelder im Index
+| Zielfeld         | Typ     | Herkunft / Fallback                      |
+| ---------------- | ------- | ---------------------------------------- |
+| `peRatio`        | double  | FMP.peRatio → yfinance.trailingPE        |
+| `earningsGrowth` | double  | berechnet aus Historie                   |
+| `revenueGrowth`  | double  | YoY Ableitung                            |
+| `debtToAssets`   | double  | totalDebt / totalAssets                  |
+| `fcfMargin`      | double  | freeCashFlow / revenue                   |
+| `sgaTrend`       | boolean | berechnet aus SG&A-Quote (Alpha Vantage) |
+..
+
+
+### 6.2  Beispiel-Mapping (JSON)
     {
-    "symbol": "AAPL",
-    "category": "Stalwart",
-    "metrics": {
-        "pe": 28.31,
-        "epsGrowth": 0.12,
-        "dividendYield": 0.0059
-    },
-    "meta": {
-        "last_update": "2025-01-03",
-        "source": "FMP"
+    "mappings": {
+        "properties": {
+        "symbol":       {"type": "keyword"},
+        "date":         {"type": "date"},
+        "source":       {"type": "keyword"},
+        "ingested_at":  {"type": "date"},
+
+        "peRatio":      {"type": "double"},
+        "priceToBook":  {"type": "double"},
+        "dividendYield":{"type": "double"},
+  
+        ..
     }
     }
-### 6.2 Felddefinitionen
+    }
+### 6.3 Beispiel-Dokument in Elasticsearch
 
-| Feld | Typ | Bedeutung |
-|-------|------|-----------|
-| `symbol` | keyword | Tickersymbol |
-| `category` | keyword | Lynch-Kategorie |
-| `metrics.pe` | float | KGV (Price/Earnings) |
-| `metrics.epsGrowth` | float | Gewinnwachstum p.a. |
-| `metrics.dividendYield` | float | Dividendenrendite |
-| `meta.last_update` | date | Zeitpunkt des API-Abrufs |
+    {
+    "_id": "AAPL|2025-11-06",
+    "_source": {
+        "symbol": "AAPL",
+        "date": "2025-11-06",
+        "source": "FMP",
+        "ingested_at": "2025-11-06T12:34:56Z",
 
-7 Implementierung (Code-Auszüge)
+        "peRatio": 28.3,
+        "priceToBook": 39.2,
+        "dividendYield": 0.0059,
+        "marketCap": 2.9e12,
+
+        "earningsGrowth": 0.12,
+        "revenueGrowth": 0.08,
+        "fcfMargin": 0.24,
+        "debtToAssets": 0.31,
+        "beta": 1.18,
+        "sgaTrend": true
+    }
+    }
 
 
-    ```json
-    7.1 Datenabruf
-    import requests
 
-    def get_key_metrics(symbol, api_key):
-        url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{symbol}?apikey={api_key}"
-        return requests.get(url).json()[0]
-    from elasticsearch import Elasticsearch
+➡️ Ab hier sind die Daten bereit für Klassifikation, Score & Dashboard.
 
-    es = Elasticsearch("http://localhost:9200")
+## 7. Streamlit-Dashboard
 
-    def store_stock_doc(doc):
-        es.index(index="stocks", id=doc["symbol"], document=doc)
+Das Streamlit-Dashboard besteht aus drei Pages, die gemeinsam die Analyse-, Screening- und Portfolio-Funktionen bereitstellen.  
+Alle Daten werden live aus Elasticsearch geladen und basieren auf den zuvor ingestierten API-Daten (FMP, yfinance, Alpha Vantage).
 
-    from elasticsearch import Elasticsearch
+### 7.1 Funktionen
 
-    es = Elasticsearch("http://localhost:9200")
+- **Dashboard (Einzelanalyse):**  
+  - Suche nach Ticker  
+  - KPI-Panel (KGV, EPS, FCF, Div. Yield, Debt/Equity etc.)  
+  - Automatische Peter-Lynch-Kategorisierung inkl. Begründung  
+  - Interaktive Zeitreihen-Charts (KGV, Wachstum, P/B, FCF etc.)  
+  - Glossar & KPI-Erklärungen  
+  [Link zur Dashboard-Page](http://localhost:8501/Dashboard)
 
-    def store_stock_doc(doc):
-        es.index(index="stocks", id=doc["symbol"], document=doc)
+- **Top-10 (Screening & Ranking):**  
+  - Ranking je Peter-Lynch-Kategorie (z. B. „Fast Growers“, „Stalwarts“)  
+  - Branchen- & Marktkapitalisierungs-Filter  
+  - Scoring-Logik mit Trefferquote pro Kriterium  
+  - Detailansicht pro Aktie: „Kriterium erfüllt / nicht erfüllt“   
+    [Link zur Top-10 Page](http://localhost:8501/Top_10) 
 
-    7.3 Einfache Lynch-Klassifikation
-    def classify(eps_growth):
-        if eps_growth > 0.2:
-            return "Fast Grower"
-        elif 0.05 < eps_growth <= 0.1:
-            return "Stalwart"
-        return "Slow Grower"
-
-## 8. Streamlit-Dashboard
-
-### 8.1 Funktionen
-- **Filter & Suche:** nach Lynch-Kategorie, Ticker, Zeitraum
-- **Kennzahlen-Vergleich:** interaktive Charts (z. B. KGV, EPS-Growth, FCF)
-- **Detailansicht pro Aktie:** Rohdaten, Kennzahlen-Panel, Kategorie-Begründung
-- **Datenaktualisierung:** Live-Abruf über APIs möglich
-- **Export:** CSV/Excel (geplant)
-
-### 8.2 Screens (Platzhalter)
-> Ersetze die folgenden Platzhalter durch deine echten Bilder (z. B. `docs/img/...`).
-
-![Dashboard – Übersicht](docs/img/dashboard_overview.png "Dashboard – Übersicht")
-![Vergleichsansicht – Kennzahlen](docs/img/dashboard_compare.png "Vergleichsansicht – Kennzahlen")
+- **Portfolio (Builder & Verwaltung):**  
+  - Auswahl & Gewichtung von Aktien je Kategorie  
+  - Strategie-Presets (z. B. defensiv, wachstumsorientiert etc.)  
+  - Vergleich Soll- vs. Ist-Gewichtung (inkl. Diagramm)  
+  - Speicherung & Laden von Portfolios in Elasticsearch  
+    [Link zur Portfolio-Page](https://mein-dashboard.de/Portfolio)
 
 ---
 
-## 9. Setup & Deployment
 
-### 9.1 Voraussetzungen
+### 7.2 Ranking-Logik (Scoring nach Peter Lynch)
+
+Die Bewertung einer Aktie erfolgt anhand eines regelbasierten Scoring-Systems, das pro Lynch-Kategorie unterschiedliche Kennzahlen prüft.  
+Die Regeln sind zentral in `lynch_criteria.py` definiert und legen fest:
+
+- **welche Kennzahlen relevant sind** (z. B. KGV, EPS-Wachstum, Schuldenquote)
+- **ob ein Kriterium verpflichtend oder optional ist**
+- **welcher Zielbereich als „gut“ gilt** (z. B. KGV < 15)
+
+#### Beispiel: Kategorie „Fast Grower“
+
+| Kriterium | Zielwert | Pflicht? |
+|-----------|----------|----------|
+| EPS-Wachstum 5y > 20 % | ✅ | ja |
+| Umsatzwachstum > 10 % | ✅ | ja |
+| KGV < 35 | ✅ | optional |
+| Verschuldung < 50 % | ✅ | optional |
+..
+#### Berechnung des Scores
+1. Jede Aktie wird mit allen Kriterien der gewählten Kategorie verglichen  
+2. Erfüllte Pflicht-Kriterien → **+1 Punkt**  
+3. Erfüllte optionale Kriterien  → **+1 Punkte**  
+4. Score = erreichte Punkte / maximal mögliche Punkte  
+5. Bei gleichem Score erfolgt die Sekundärsortierung automatisch nach Marktkapitalisierung (absteigend), um größere und damit tendenziell stabilere Unternehmen zu bevorzugen, denn sie sind stabiler am Markt.   
+[Link zur Quelle, die Punkt 5 befürwortet.](https://www.sciencedirect.com/science/article/pii/S1094202524000437)
+
+### Beispiel:
+![alt text](image.png)
+
+## 8. Setup & Deployment
+
+### 8.1 Voraussetzungen
 - Docker & Docker Compose  
 - Python **3.10+**  
 - API-Keys in einer `.env`-Datei
@@ -216,7 +262,7 @@ Die vollständige Theorie → siehe WI-Projekt.
     ALPHA_VANTAGE_KEY=dein_alpha_vantage_key
     ELASTICSEARCH_URL=http://localhost:9200
 
-    9.2 Startreihenfolge
+    8.2 Startreihenfolge
     Container starten
     docker compose up -d
     Daten laden (S&P 500)
@@ -227,39 +273,46 @@ Die vollständige Theorie → siehe WI-Projekt.
 
 ---
 
-## 10. Geplante Erweiterungen
+## 9. Geplante Erweiterungen
+ Mehr Aktien    
+ Mehr Cronjob zu jede API
 
-| Feature                         | Status   |
-|---------------------------------|----------|
-| Automatisches Daily-Update      | geplant  |
-| Alert-System (E-Mail/Telegram)  | geplant  |
-| Backtesting-Modul               | geplant  |
-| Machine-Learning-EPS-Forecasts  | offen    |
+
+## ....
+
+## 10. Fazit
+### Projektübersicht: Automatisierter Analyse-Workflow 
+
+Das Projekt zeigt, dass sich ein vollständiger, automatisierter Analyse-Workflow für Fundamentaldaten mit vertretbarem Aufwand realisieren lässt:
+
+### Kernfunktionen
+- **Automatisierte Datenerfassung** über mehrere APIs (FMP, yfinance, Alpha Vantage)  
+- **Zentrale & strukturierte Speicherung** in Elasticsearch  
+- **Regelbasiertes Bewertungssystem nach Peter Lynch** (inkl. Scoring & Ranking)  
+- **Interaktives Streamlit-Dashboard** für Analyse, Screening & Portfolio-Management  
+
+###  Demonstrierter Mehrwert
+- API-gestütztes **Data Engineering**
+- Nutzung einer **Suchindex-Datenbank statt klassischer SQL-Modelle**
+- **Nachvollziehbares Regelwerk** statt Blackbox-ML
+- **Modulare, wiederverwendbare ETL-Pipelines**
+- **Automatisierte Workflows** als Grundlage für spätere Skalierung
+
+###  Erweiterbarkeit (bewusst vorgesehen)
+- **Technisch**: zusätzliche Datenquellen, Backtesting, Alerts, Scheduling
+- **Funktional**: ML-Modelle, internationale Märkte, Portfolio-Tracking, weitere Bewertungsmodelle
 
 ---
 
-## 11. Fazit
+### Kurzfassung
+Aus einem **theoretischen Bewertungsmodell** wurde ein **lauffähiges, erweiterbares Analyse-System**,  
+das echte Investmententscheidungen unterstützen kann.
 
-Dieses Projekt zeigt, wie ein klassisches Investmentmodell durch moderne ETL-Architektur, eine Such-/Analyse-Engine und ein UI-Framework in eine skalierbare, reproduzierbare und nachvollziehbare Datenanwendung transformiert werden kann.
 
-Die Lösung dient als robuste Grundlage für weiterführende Funktionen wie:
 
-- Backtesting historischer Strategien  
-- Benachrichtigungssysteme (Alerts)  
-- ML-gestützte Prognosen (EPS-, KGV-Modelle)  
-- Automatische Rebalancing- oder Watchlist-Logik  
+## 11. Quellen
+https://www.sciencedirect.com/science/article/pii/S1094202524000437
 
----
-
-## 12. Quellen
-
-| Quelle | Inhalt |
-|--------|--------|
-| Lynch, Peter – *One Up on Wall Street* (1989) | Originalquelle der 6 Kategorien |
-| Investopedia | Begriffe wie KGV, PEG, FCF, Equity Ratio |
-| Financial Modeling Prep API | Fundamentaldaten (`/key-metrics-ttm`) |
-| yfinance | Bilanz- & Marktdaten-Wrapper |
-| Alpha Vantage API | EPS- und Earnings-Daten |
 
 ---
 

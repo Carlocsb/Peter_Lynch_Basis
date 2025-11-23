@@ -64,12 +64,14 @@ services:
       elasticsearch:
         condition: service_healthy
     environment:
-      - ELASTICSEARCH_URL=http://elasticsearch:9200   # 👈 wichtig
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
       - ELASTICSEARCH_INDEX=stocks
+      - STRICT_REQUIRED=1          # 👈 jetzt „streng“ aktiv
     volumes:
       - ./code:/app/code
       - ./data:/app/data
     command: ["bash", "-c", "python /app/code/API/ingest_fmp_sp.py"]
+
 
 
   # 🔹 Data-Ingestion Backend (Yahoo Finance)

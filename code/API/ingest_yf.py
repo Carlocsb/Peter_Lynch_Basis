@@ -1,4 +1,3 @@
-# code/API/ingest_yf.py
 import os
 import json
 import time
@@ -24,20 +23,44 @@ CACHE_FILE = DATA_DIR / "sp500_symbols.json"
 
 # === 2️⃣ Symbol-Quelle ===
 def load_symbols() -> List[str]:
-    if CACHE_FILE.exists():
-        with open(CACHE_FILE, "r") as f:
-            symbols = json.load(f)
-            print(f"✅ {len(symbols)} Symbole aus Cache geladen.")
-            return symbols
-    else:
-        symbols = [
-            "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA",
-            "TSLA", "JPM", "JNJ", "PG", "V", "MA", "HD", "DIS",
-            "PFE", "NFLX", "KO", "PEP", "XOM", "CSCO", "BAC",
-            "CVX", "NKE", "ORCL", "ABBV", "INTC", "ADBE", "T", "WMT", "UNH"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _fallback_symbols() -> List[str]:
+        return [
+            "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","JPM","JNJ","PG",
+            "V","MA","HD","DIS","PFE","NFLX","KO","PEP","XOM","CSCO","BAC",
+            "CVX","NKE","ORCL","ABBV","INTC","ADBE","T","WMT","UNH"
         ]
-        print(f"⚠️ Keine Cache-Datei gefunden – nutze {len(symbols)} Test-Symbole.")
-        return symbols
+
+    # 1) Cache lesen
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, "r") as f:
+                symbols = json.load(f)
+            if isinstance(symbols, list) and len(symbols) > 0:
+                print(f"✅ {len(symbols)} Symbole aus Cache geladen.")
+                return symbols
+            else:
+                print("⚠️ Cache ist leer. Versuche Neuaufbau…")
+        except Exception as e:
+            print(f"⚠️ Cache defekt ({e}). Baue neu auf…")
+
+    # 2) Neuaufbau via yfinance (S&P 500)
+    try:
+        syms = yf.tickers_sp500()
+        syms = [s.strip().upper() for s in syms if s and isinstance(s, str)]
+        if syms:
+            with open(CACHE_FILE, "w") as f:
+                json.dump(syms, f)
+            print(f"✅ S&P-500 neu geladen: {len(syms)} Symbole. Cache aktualisiert.")
+            return syms
+    except Exception as e:
+        print(f"⚠️ Konnte S&P-500 nicht laden ({e}). Fallback auf Test-Symbole.")
+
+    # 3) Fallback
+    test_syms = _fallback_symbols()
+    print(f"⚠️ Keine Cache-Datei / kein Download möglich – nutze {len(test_syms)} Test-Symbole.")
+    return test_syms
 
 # === 3️⃣ Metriken ===
 # Nur informativ – wir lesen dynamisch aus FIELD_MAP; diese Liste muss nicht 1:1 genutzt werden.

@@ -1,6 +1,8 @@
 # pages/Top_10_Kategorien.py
-
-import os, sys, pandas as pd, streamlit as st
+import os, sys, math
+from datetime import datetime, timezone, date, timedelta
+import pandas as pd
+import streamlit as st
 import importlib
 
 # Pfad zur src-Ebene
@@ -11,13 +13,13 @@ if parent_dir not in sys.path:
 # Modul laden & sicher neu laden
 from src import lynch_criteria
 importlib.reload(lynch_criteria)
-CATEGORIES = lynch_criteria.CATEGORIES  # <-- nur hier holen
+CATEGORIES = lynch_criteria.CATEGORIES
 
 from src.funktionen import (
     get_es_connection,
     load_data_from_es,
+    render_source_selector,
     score_row,
-    render_source_selector,   # << Neu: Datenquellen-Umschalter
 )
 
 # === 1️⃣ Setup ===
@@ -28,29 +30,294 @@ st.markdown("*(Daten live aus Elasticsearch – bewertet nach Lynch-Kriterien)*"
 
 # === 2️⃣ Verbindung & Daten ===
 es = get_es_connection()
-source_mode = render_source_selector()          # << Neu
-df = load_data_from_es(es, source_mode=source_mode)  # << Neu: Modus weitergeben
+source_mode = render_source_selector()
+df = load_data_from_es(es, source_mode=source_mode)
 
 if df.empty:
     st.warning("⚠️ Keine Daten in Elasticsearch gefunden. Bitte Ingest laufen lassen.")
     st.stop()
 
-# Typen aufräumen (falls nötig)
 for col in ["marketCap", "peRatio"]:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-def make_criteria_with_labels():
-    """
-    Nimmt die Regeln aus CATEGORIES (2er- oder 4er-Tupel) und ergänzt nur ein hübsches Label.
-    Anzahl/Logik der Regeln bleiben 1:1 bestehen.
-    """
-    # optionale Feld-Aliasse: was in CATEGORIES steht -> wie es im DataFrame heißt
-    FIELD_ALIAS = {
-        "trailingPE": "peRatio",   # wir lesen peRatio aus ES
+ES_INDEX = os.getenv("ELASTICSEARCH_INDEX", "stocks")
+
+# === Source-Helfer ===
+def _normalize_source_mode(s: str | None):
+    if not s:
+        return None
+    key = s.strip().lower()
+    if key.startswith("nur "):
+        key = key[4:].strip()
+    if key in ("alle", "all", "*"):
+        return None
+    if key in ("yf", "yfinance") or "yfinance" in key:
+        return ["yfinance"]
+    if key in ("av", "alphavantage", "alpha-vantage") or "alpha" in key:
+        return ["alphavantage"]
+    if "fmp" in key:
+        return ["fmp"]
+    return [key]
+
+def _es_must_clauses(symbol: str, source_mode: str | None):
+    must = [
+        {
+            "bool": {
+                "should": [
+                    {"term": {"symbol": symbol}},
+                    {"match": {"symbol": symbol}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+    ]
+    sources = _normalize_source_mode(source_mode)
+    if isinstance(sources, list) and len(sources) == 1:
+        must.append(
+            {
+                "bool": {
+                    "should": [
+                        {"term": {"source": sources[0]}},
+                        {"match": {"source": sources[0]}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            }
+        )
+    return must
+
+# === Helfer ===
+def _parse_es_date(s: str | None):
+    if not isinstance(s, str):
+        return None
+    try:
+        s2 = s.replace("Z", "+00:00")
+        return datetime.fromisoformat(s2).astimezone(timezone.utc).date()
+    except Exception:
+        try:
+            return datetime.fromisoformat(s.split("T")[0]).date()
+        except Exception:
+            return None
+
+def _es_get_latest(symbol: str, source: str | None):
+    body = {
+        "size": 1,
+        "sort": [{"date": {"order": "desc"}}],
+        "_source": True,
+        "query": {"bool": {"must": _es_must_clauses(symbol, source)}},
+    }
+    res = es.search(index=ES_INDEX, body=body)
+    return res["hits"]["hits"][0]["_source"] if res["hits"]["hits"] else None
+
+# === Jahr zurück ===
+def es_get_prev_quarter_doc(symbol: str, source: str | None, latest_doc: dict):
+    base_doc = None
+
+    if isinstance(latest_doc, dict) and latest_doc.get("calendarYear") and latest_doc.get("period"):
+        base_doc = latest_doc
+    else:
+        must_base = _es_must_clauses(symbol, source) + [
+            {"exists": {"field": "calendarYear"}},
+            {"exists": {"field": "period"}},
+        ]
+
+        body_base = {
+            "size": 1,
+            "sort": [{"date": {"order": "desc"}}],
+            "_source": True,
+            "query": {"bool": {"must": must_base}},
+        }
+
+        res_base = es.search(index=ES_INDEX, body=body_base)
+        hits_base = res_base["hits"]["hits"]
+        if not hits_base:
+            return None, None
+        base_doc = hits_base[0]["_source"]
+
+    period = base_doc.get("period")
+    year_now = base_doc.get("calendarYear")
+    if not period or not year_now:
+        return None, None
+
+    try:
+        year_now_int = int(str(year_now))
+    except Exception:
+        return None, None
+    target_year = year_now_int - 1
+
+    must_prev = _es_must_clauses(symbol, source) + [
+        {
+            "bool": {
+                "should": [
+                    {"term": {"calendarYear": target_year}},
+                    {"term": {"calendarYear": str(target_year)}},
+                    {"term": {"calendarYear.keyword": str(target_year)}},
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+        {
+            "bool": {
+                "should": [
+                    {"term": {"period": period}},
+                    {"term": {"period.keyword": period}},
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+    ]
+
+    body_prev = {
+        "size": 1,
+        "sort": [{"date": {"order": "desc"}}],
+        "_source": True,
+        "query": {"bool": {"must": must_prev}},
     }
 
-    # deutsche Labels pro Feld (fallback = Feldname)
+    res_prev = es.search(index=ES_INDEX, body=body_prev)
+    hits_prev = res_prev["hits"]["hits"]
+    if not hits_prev:
+        return None, None
+
+    prev_doc = hits_prev[0]["_source"]
+
+    d_now = _parse_es_date(base_doc.get("date"))
+    d_prev = _parse_es_date(prev_doc.get("date"))
+    dist = None
+    if d_now and d_prev:
+        dist = abs((d_now - d_prev).days)
+
+    return prev_doc, dist
+
+def has_year_back_data(
+    symbol: str,
+    source: str | None,
+    *,
+    latest_doc: dict,
+    required_fields: list[str] | None = None,
+):
+    doc, dist = es_get_prev_quarter_doc(symbol, source, latest_doc)
+    if not doc:
+        return False, doc, dist
+    if required_fields:
+        for f in required_fields:
+            if doc.get(f) is None:
+                return False, doc, dist
+    return True, doc, dist
+
+# === Vorquartal-Suche ===
+def es_get_prev_quarter_same_year(symbol: str, source: str | None, base_doc: dict):
+    if not isinstance(base_doc, dict):
+        return None, None
+
+    period = str(base_doc.get("period", "")).upper()
+    year = base_doc.get("calendarYear")
+    if not period or year is None:
+        return None, None
+
+    try:
+        year_int = int(str(year))
+    except Exception:
+        return None, None
+
+    mapping = {
+        "Q1": ("Q4", year_int - 1),
+        "Q2": ("Q1", year_int),
+        "Q3": ("Q2", year_int),
+        "Q4": ("Q3", year_int),
+    }
+    prev_period, prev_year = mapping.get(period, (None, None))
+    if not prev_period:
+        return None, None
+
+    must_prev = _es_must_clauses(symbol, source) + [
+        {
+            "bool": {
+                "should": [
+                    {"term": {"calendarYear": prev_year}},
+                    {"term": {"calendarYear": str(prev_year)}},
+                    {"term": {"calendarYear.keyword": str(prev_year)}},
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+        {
+            "bool": {
+                "should": [
+                    {"term": {"period": prev_period}},
+                    {"term": {"period.keyword": prev_period}},
+                ],
+                "minimum_should_match": 1,
+            }
+        },
+    ]
+
+    body_prev = {
+        "size": 1,
+        "sort": [{"date": {"order": "desc"}}],
+        "_source": True,
+        "query": {"bool": {"must": must_prev}},
+    }
+
+    res_prev = es.search(index=ES_INDEX, body=body_prev)
+    hits_prev = res_prev["hits"]["hits"]
+    if not hits_prev:
+        return None, None
+
+    prev_doc = hits_prev[0]["_source"]
+
+    d_now = _parse_es_date(base_doc.get("date"))
+    d_prev = _parse_es_date(prev_doc.get("date"))
+    dist = None
+    if d_now and d_prev:
+        dist = abs((d_now - d_prev).days)
+
+    return prev_doc, dist
+
+# === Fallbacks für Felder ===
+FIELD_FALLBACKS = {
+    "peRatio": ["trailingPE", "priceEarningsRatioTTM", "priceEarningsRatio"],
+    "priceToBook": ["priceToBookRatio", "pbRatio"],
+    "dividendYield": ["dividendYieldTTM", "dividendYield"],
+    "payoutRatio": ["payoutRatioTTM", "payoutRatio"],
+    "pegRatio": ["pegRatioTTM", "pegRatio"],
+    "bookValuePerShare": ["bookValuePerShareTTM"],
+    "cashPerShare": ["cashPerShareTTM"],
+    "freeCashFlowPerShare": ["freeCashFlowPerShareTTM"],
+    "debtToEquity": ["debtEquityRatio", "debtToEquityTTM"],
+    "currentRatio": ["currentRatioTTM", "currentRatio"],
+    "quickRatio": ["quickRatioTTM", "quickRatio"],
+    "revenue": ["totalRevenue", "revenueTTM"],
+    "eps": ["epsDiluted", "epsdiluted", "trailingEps"],
+}
+
+def _get_with_fallback(doc: dict, field: str):
+    if not isinstance(doc, dict):
+        return None
+    if field in doc and doc[field] is not None:
+        return doc[field]
+    for alt in FIELD_FALLBACKS.get(field, []):
+        if alt in doc and doc[alt] is not None:
+            return doc[alt]
+    return None
+
+def compute_qoq_growth(curr_doc: dict, prev_doc: dict, field: str):
+    if not isinstance(curr_doc, dict) or not isinstance(prev_doc, dict):
+        return None
+    v_now = _get_with_fallback(curr_doc, field)
+    v_prev = _get_with_fallback(prev_doc, field)
+    if not isinstance(v_now, (int, float)) or not isinstance(v_prev, (int, float)):
+        return None
+    if v_prev == 0:
+        return None
+    return (v_now / v_prev) - 1.0
+
+# === Kriterien + Labels ===
+def make_criteria_with_labels():
+    FIELD_ALIAS = {
+        "trailingPE": "peRatio",
+    }
     LABEL_MAP = {
         "earningsGrowth":   "Gewinnwachstum",
         "epsGrowth":        "EPS-Wachstum",
@@ -69,13 +336,15 @@ def make_criteria_with_labels():
         "bookValuePerShare":"Buchwert/Aktie",
         "totalDebt":        "Gesamtschulden",
         "sector":           "Sektor",
+        "currentRatio":     "Current Ratio",
+        "quickRatio":       "Quick Ratio",
+        "fcfMargin":        "FCF-Marge",
+        "profitMargin":     "Profit-Marge",
     }
-
     labeled = {}
     for cat, rules in CATEGORIES.items():
         augmented = []
         for item in rules:
-            # CATEGORIES kann (feld, regel) ODER (feld, label, regel, optional) enthalten
             if len(item) == 2:
                 field, rule = item
                 optional = False
@@ -83,20 +352,17 @@ def make_criteria_with_labels():
             else:
                 field, label_text_in, rule, optional = item
                 label_text = label_text_in or LABEL_MAP.get(field, field)
-
-            # Alias anwenden, damit wir sicher die Spalte im df treffen
             used_field = FIELD_ALIAS.get(field, field)
-
             augmented.append((used_field, label_text, rule, optional))
         labeled[cat] = augmented
     return labeled
 
-# === 4️⃣ Kategorie-Auswahl ===
+# === Kategorie-Auswahl ===
 CRITERIA = make_criteria_with_labels()
 kategorie = st.selectbox("Kategorie wählen:", list(CRITERIA.keys()))
 criteria = CRITERIA[kategorie]
 
-# === 5️⃣ Filter: Branche / MarketCap ===
+# === Filter ===
 st.sidebar.header("🔍 Filter")
 
 if "industry" in df.columns:
@@ -106,7 +372,6 @@ if "industry" in df.columns:
         df = df[df["industry"] == selected_industry]
 
 if "marketCap" in df.columns and not df["marketCap"].dropna().empty:
-    # In Milliarden USD umrechnen
     df["marketCap_Mrd"] = df["marketCap"] / 1e9
     min_cap = float(df["marketCap_Mrd"].min())
     max_cap = float(df["marketCap_Mrd"].max())
@@ -115,32 +380,47 @@ if "marketCap" in df.columns and not df["marketCap"].dropna().empty:
         min_value=round(min_cap, 1),
         max_value=round(max_cap, 1),
         value=(round(min_cap, 1), round(max_cap, 1)),
-        step=10.0 if (max_cap - min_cap) > 10 else 1.0
+        step=10.0 if (max_cap - min_cap) > 10 else 1.0,
     )
     df = df[(df["marketCap_Mrd"] >= cap_range[0]) & (df["marketCap_Mrd"] <= cap_range[1])]
 
-# === 6️⃣ Bewertung (zentral via score_row) ===
+
+
+# === Bewertung ===
 def evaluate_stock(row, criteria):
-    """Erweitertes Scoring mit Detailausgabe"""
+    # 1) Score zentral über score_row berechnen
+    score = score_row(row, criteria)
+    max_score = len(criteria)
+
+    # 2) Detail-Liste für die Anzeige (bleibt Page-spezifisch)
     results = []
-    score = 0
+    getv = row.get if isinstance(row, dict) else row.__getitem__
+
     for field, label, rule, optional in criteria:
-        val = row.get(field, None)
+        try:
+            val = getv(field)
+        except Exception:
+            val = None
+
         ok = False
         if isinstance(val, (int, float)):
             try:
                 ok = rule(val)
             except Exception:
                 ok = False
-        results.append({
-            "Kennzahl": label,
-            "Istwert": val,
-            "Erfüllt": ok,
-            "Optional": optional,
-        })
-        if ok:
-            score += 1
-    return score, len(criteria), results
+
+        results.append(
+            {
+                "Kennzahl": label,
+                "Feld": field,
+                "Istwert": val,
+                "Erfüllt": ok,
+                "Optional": optional,
+            }
+        )
+
+    return score, max_score, results
+
 
 scores = df.apply(lambda r: evaluate_stock(r, criteria), axis=1)
 df["Score"] = [s[0] for s in scores]
@@ -153,11 +433,10 @@ if "marketCap" in df.columns:
     sort_cols.append("marketCap")
 df = df.sort_values(by=sort_cols, ascending=[False] * len(sort_cols)).reset_index(drop=True)
 
-# MarketCap in Milliarden USD umrechnen und formatieren (Anzeige)
 if "marketCap" in df.columns:
     df["MarketCap (Mrd USD)"] = (df["marketCap"] / 1e9).round(1)
 
-# === 7️⃣ Anzeige ===
+# === Ranking ===
 st.caption(f"Quelle: {source_mode}")
 st.markdown(f"### 📈 Ranking – {kategorie}")
 cols_to_show = ["symbol", "Score", "MaxScore", "Score %"]
@@ -165,31 +444,137 @@ if "MarketCap (Mrd USD)" in df.columns:
     cols_to_show.insert(1, "MarketCap (Mrd USD)")
 
 st.dataframe(
-    df[cols_to_show].head(10).style.format({
-        "MarketCap (Mrd USD)": "{:,.1f}",
-        "Score %": "{:.0f} %",
-    }),
-    use_container_width=True
+    df[cols_to_show].head(10).style.format(
+        {
+            "MarketCap (Mrd USD)": "{:,.1f}",
+            "Score %": "{:.0f} %",
+        }
+    ),
+    use_container_width=True,
 )
 
+# === Detailansicht ===
 aktie = st.selectbox("Wähle eine Aktie für Details:", df["symbol"].head(10))
 row = df[df["symbol"] == aktie].iloc[0]
 
 st.markdown("---")
 st.subheader(f"🔍 Detailansicht: {aktie}")
 
-for item in row["Details"]:
-    icon = "✅" if item["Erfüllt"] else "❌"
-    optional_tag = " *(optional)*" if item["Optional"] else ""
-    val_disp = (
-        f"{item['Istwert']*100:.2f} %"
-        if isinstance(item["Istwert"], (int, float))
-           and pd.notna(item["Istwert"])
-           and abs(item["Istwert"]) < 1
-           and "Ratio" not in item["Kennzahl"]
-        else item["Istwert"]
+preferred_source = None if (not source_mode) else source_mode
+curr_doc = _es_get_latest(aktie, preferred_source)
+
+ok_prev, prev_doc, prev_dist = has_year_back_data(
+    aktie,
+    preferred_source,
+    latest_doc=curr_doc,
+    required_fields=None,
+)
+
+# Vorquartale holen
+prev_quarter_curr, _ = (None, None)
+if isinstance(curr_doc, dict):
+    prev_quarter_curr, _ = es_get_prev_quarter_same_year(aktie, preferred_source, curr_doc)
+
+prev_quarter_prev, _ = (None, None)
+if ok_prev and isinstance(prev_doc, dict):
+    prev_quarter_prev, _ = es_get_prev_quarter_same_year(aktie, preferred_source, prev_doc)
+
+# QoQ-Wachstum (EPS = Gewinn, Revenue = Umsatz)
+umsatz_qoq_now = compute_qoq_growth(curr_doc, prev_quarter_curr, "revenue") if prev_quarter_curr else None
+gewinn_qoq_now = compute_qoq_growth(curr_doc, prev_quarter_curr, "eps") if prev_quarter_curr else None
+
+umsatz_qoq_prev = compute_qoq_growth(prev_doc, prev_quarter_prev, "revenue") if prev_quarter_prev else None
+gewinn_qoq_prev = compute_qoq_growth(prev_doc, prev_quarter_prev, "eps") if prev_quarter_prev else None
+
+# Mapping: für welche Felder ersetzen wir den Wert durch QoQ?
+growth_fields_now = {
+    "revenueGrowth": umsatz_qoq_now,
+    "earningsGrowth": gewinn_qoq_now,
+    "epsGrowth": gewinn_qoq_now,
+}
+growth_fields_prev = {
+    "revenueGrowth": umsatz_qoq_prev,
+    "earningsGrowth": gewinn_qoq_prev,
+    "epsGrowth": gewinn_qoq_prev,
+}
+
+def _fmt_value(x, field_name):
+    if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
+        return "–"
+    if any(s in field_name.lower() for s in ["growth", "margin", "yield"]):
+        try:
+            return f"{x*100:.2f} %"
+        except Exception:
+            return x
+    return f"{x:.4f}" if isinstance(x, float) else x
+
+def _icon(ok, optional=False):
+    base = "✅" if ok else "❌"
+    return base + (" *(optional)*" if optional else "")
+
+col_l, col_r = st.columns(2)
+
+# ---- Aktuell ----
+with col_l:
+    st.markdown("### Aktuell")
+    for item in row["Details"]:
+        label = item["Kennzahl"]
+        field = item["Feld"]
+
+        override = growth_fields_now.get(field)
+        if override is not None:
+            now_v = override
+        else:
+            now_v = _get_with_fallback(curr_doc, field) if isinstance(curr_doc, dict) else row.get(field)
+
+        st.write(
+            f"{_icon(item['Erfüllt'], item['Optional'])} "
+            f"**{label}** → **Ist:** {_fmt_value(now_v, field)}"
+        )
+
+# ---- Vor ~1 Jahr ----
+with col_r:
+    st.markdown("### Vor ~1 Jahr")
+    if not ok_prev or not isinstance(prev_doc, dict):
+        msg = "Keine verwertbaren Werte im Vorjahresquartal gefunden."
+        if prev_doc and prev_dist is not None:
+            msg += f" (nächstes Dokument: {int(prev_dist)} Tage entfernt)"
+        st.info(msg)
+    else:
+        prev_score, prev_maxscore, prev_details = evaluate_stock(prev_doc, criteria)
+        prev_date = _parse_es_date(prev_doc.get("date"))
+
+        base_doc_for_plain = prev_quarter_prev or prev_doc
+
+        for item in prev_details:
+            label = item["Kennzahl"]
+            field = item["Feld"]
+            ok_flag = item["Erfüllt"]
+            opt_flag = item["Optional"]
+
+            override = growth_fields_prev.get(field)
+            if override is not None:
+                prev_v = override
+            else:
+                prev_v = _get_with_fallback(base_doc_for_plain, field)
+
+            st.write(
+                f"{_icon(ok_flag, opt_flag)} "
+                f"**{label}** → **Damals:** {_fmt_value(prev_v, field)}"
+            )
+
+    src_cur  = curr_doc.get("source") if isinstance(curr_doc, dict) else None
+    src_prev = prev_doc.get("source") if (ok_prev and isinstance(prev_doc, dict)) else None
+    date_cur = _parse_es_date(curr_doc.get("date")) if isinstance(curr_doc, dict) else None
+    date_prev= _parse_es_date(prev_doc.get("date")) if (ok_prev and isinstance(prev_doc, dict)) else None
+
+    st.caption(
+        f"Quelle aktuell: {src_cur or '–'}{(' • '+date_cur.isoformat()) if date_cur else ''}  |  "     
+
+        f"Quelle vor ~1 Jahr: {src_prev or '–'}{(' • '+(date_prev.isoformat() if date_prev else '–'))}"
     )
-    st.write(f"{icon} **{item['Kennzahl']}**{optional_tag} → **Ist:** {val_disp}")
 
 st.metric("Gesamtscore", f"{row['Score']} / {row['MaxScore']}", f"{row['Score %']} %")
-st.caption("Datenquelle: Elasticsearch – bewertet nach Peter-Lynch-Kriterien.")
+
+
+

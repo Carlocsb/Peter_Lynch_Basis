@@ -15,7 +15,6 @@ from src.funktionen import (
     lade_historische_kennzahlen,
     zeige_kennzahlverlauf,
     berechne_peter_lynch_kategorie,
-    erklaere_kategorie,
     berechne_kennzahlen_tabelle,
     beschreibe_kennzahlen
 )
@@ -74,17 +73,18 @@ if suchbegriff:
         col7.metric("💸 Dividendenrendite", f"{daten.get('dividendYield')*100:.2f} %" if daten.get("dividendYield") else "—")
         col8.metric("📊 Gewinn/Aktie (EPS)", round(daten.get("eps", 0), 2) if daten.get("eps") else "—")
         col9.metric("⚖️ Verschuldungsgrad (Debt/Equity)", round(daten.get("debtToEquity", 0), 2) if daten.get("debtToEquity") else "—")
-
+        
         # === 🧭 Peter-Lynch-Kategorisierung ===
         st.markdown("---")
         st.markdown("### 🧭 Peter-Lynch-Kategorisierung")
 
-        beste_kategorie, trefferquote, vergleich, _ = berechne_peter_lynch_kategorie(daten)
+        kategorie_text, trefferquote = berechne_peter_lynch_kategorie(daten)
+
         st.success(
-            f"🏷️ Diese Aktie gehört wahrscheinlich zur Kategorie **{beste_kategorie}**, "
-            f"weil sie {trefferquote}% der Kriterien erfüllt. {vergleich}"
+            f"🏷️ Diese Aktie gehört wahrscheinlich zur Kategorie **{kategorie_text}**, "
+            f"weil sie {trefferquote}% der Kriterien erfüllt. "
         )
-        st.caption(erklaere_kategorie(beste_kategorie))
+
 
         # === 📈 Verlauf ausgewählter Kennzahlen ===
         st.markdown("---")
