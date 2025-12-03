@@ -11,9 +11,8 @@
 - [6. Datenmodell und Elasticsearch-Mapping](#6-datenmodell-und-elasticsearch-mapping)
 - [7. Streamlit-Dashboard](#7-streamlit-dashboard)
 - [8. Setup & Deployment](#8-setup--deployment)
-- [9. Geplante Erweiterungen](#9-geplante-erweiterungen)
-- [10. Fazit](#10-fazit)
-- [11. Quellen](#11-quellen)
+- [9. Fazit](#10-fazit)
+- [10. Quellen](#11-quellen)
 
 ---
 
@@ -104,6 +103,27 @@ Die vollständige Theorie → siehe WI-Projekt.
 
 ---
 
+## 4.3 Page Diagramme
+
+<details style="font-size: 1.1rem; margin-bottom: 10px;">
+  <summary>📊 <strong>Dashboard</strong></summary>
+  <br>
+  <img src="Dashboard.png" alt="Dashboard" width="800">
+</details>
+
+<details style="font-size: 1.1rem; margin-bottom: 10px;">
+  <summary>📈 <strong>Portfolio</strong></summary>
+  <br>
+  <img src="Portfolio.png" alt="Portfolio" width="800">
+</details>
+
+<details style="font-size: 1.1rem; margin-bottom: 10px;">
+  <summary>📉 <strong>Top 10</strong></summary>
+  <br>
+  <img src="Top_10.png" alt="Top 10" width="800">
+</details>
+
+---
 ## 5. Datenquellen & API-Abruf
 
 Dieser Abschnitt beschreibt, **woher** die Daten stammen und **wie** sie technisch in das System geladen werden – noch ohne Bezug auf das Elasticsearch-Datenmodell.
@@ -273,14 +293,8 @@ Die Regeln sind zentral in `lynch_criteria.py` definiert und legen fest:
 
 ---
 
-## 9. Geplante Erweiterungen
- Mehr Aktien    
- Mehr Cronjob zu jede API
 
-
-## ....
-
-## 10. Fazit
+## 9. Fazit
 ### Projektübersicht: Automatisierter Analyse-Workflow 
 
 Das Projekt zeigt, dass sich ein vollständiger, automatisierter Analyse-Workflow für Fundamentaldaten mit vertretbarem Aufwand realisieren lässt:
@@ -310,8 +324,9 @@ das echte Investmententscheidungen unterstützen kann.
 
 
 
-## 11. Quellen
-https://www.sciencedirect.com/science/article/pii/S1094202524000437
+## 10. Quellen
+Mergers, firm size, and volatility in a granular economy: https://www.sciencedirect.com/science/article/pii/S1094202524000437  
+One Up on Wall Street: https://www.thalia.de/shop/home/artikeldetails/A1003289250
 
 
 ---
