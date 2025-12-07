@@ -1,0 +1,53 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+
+# Virtual environments
+venv/
+.env/
+.env.local/
+.venv/
+env/
+ENV/
+
+# Jupyter / temp
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Environment variables ---
+.env
+.env.local
+.env.*
+!.env.example   # Ausnahme: Beispiel-Env soll im Repo bleiben
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- Logs ---
+*.log
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Docker ---
+docker-data/
+*.pid
+
+# --- Cached data ---
+*.cache
+*.sqlite
+*.db
+
+# --- Python build ---
+build/
+dist/
+*.egg-info/
+
+# --- Images generated locally ---
+/images/generated/
