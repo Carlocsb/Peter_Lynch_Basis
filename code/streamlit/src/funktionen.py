@@ -406,7 +406,7 @@ def suche_aktie_in_es(es, symbol: str, source_mode: Optional[str] = None):
 
 
 # ==========================================================
-# 2️⃣ VISUALISIERUNG
+# VISUALISIERUNG
 # ==========================================================
 
 def zeige_kennzahlverlauf(df: pd.DataFrame, symbol: str, titel: str, einheit: str = ""):
@@ -421,7 +421,7 @@ def zeige_kennzahlverlauf(df: pd.DataFrame, symbol: str, titel: str, einheit: st
 
 
 # ==========================================================
-# 3️⃣ PETER-LYNCH-KATEGORISIERUNG
+#  PETER-LYNCH-KATEGORISIERUNG
 # ==========================================================
 
 def score_row(row_or_dict, criteria):
@@ -488,7 +488,7 @@ def erklaere_kategorie(kategorie: str) -> str:
 
 
 # ==========================================================
-# 4️⃣ HILFSFUNKTIONEN / UTILITIES
+# HILFSFUNKTIONEN / UTILITIES
 # ==========================================================
 
 def berechne_kennzahlen_tabelle(daten: dict) -> pd.DataFrame:
@@ -519,7 +519,7 @@ def beschreibe_kennzahlen() -> dict:
 
 
 # ==========================================================
-# 5️⃣ DATENLADEN & SCORING – FÜR PORTFOLIO UND TOP-10-SEITE
+# DATENLADEN & SCORING – FÜR PORTFOLIO UND TOP-10-SEITE
 # ==========================================================
 
 def load_data_from_es(es=None, limit: int = 2000, index: str = INDEX, source_mode: Optional[str] = None) -> pd.DataFrame:

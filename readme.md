@@ -32,6 +32,30 @@ Ziel ist der Aufbau einer durchgängigen Datenpipeline, die:
 5. Grundlage für tägliche Updates, Alerts, Backtesting und ML-Erweiterungen bildet  
 
 
+### 1.3 Herangehensweise
+
+Das Projekt wurde iterativ umgesetzt und folgt einer klaren Data-Pipeline-Struktur:
+
+1. **Definition der Anforderungen**  
+   Die theoretischen Lynch-Kriterien wurden analysiert, in konkrete Kennzahlen übersetzt und als Regelwerk für die spätere Klassifikation festgelegt.
+
+2. **Auswahl & Test der Datenquellen**  
+   Drei APIs (FMP, yfinance, Alpha Vantage) wurden hinsichtlich Datenqualität, Abdeckung und Historie geprüft und kombiniert.
+
+3. **Entwicklung der ETL-Pipeline**  
+   Eine modulare Python-Pipeline extrahiert alle S&P-500-Daten, vereinheitlicht sie und speichert sie historisiert in Elasticsearch.
+
+4. **Aufbau des Datenmodells**  
+   Ein einheitliches Elasticsearch-Mapping sorgt dafür, dass alle Kennzahlen strukturiert, vergleichbar und performant abfragbar sind.
+
+5. **Automatische Lynch-Klassifikation**  
+   Die Regeln wurden programmatisch umgesetzt, sodass jede Aktie automatisch kategorisiert und bewertet werden kann.
+
+6. **Entwicklung des Streamlit-Dashboards**  
+   Drei Pages (Dashboard, Top-10, Portfolio) visualisieren die Daten, ermöglichen Screening, Vergleiche und Portfolio-Aufbau.
+
+➡️ Ergebnis: Ein durchgängiger Analyse-Workflow von der Datenbeschaffung bis zur Bewertung und Visualisierung – modular, automatisierbar und erweiterbar.
+
 ## 2. Bezug zum WI-Projekt
 
 Dieses Praxisprojekt baut auf dem vorherigen WI-Projekt auf, in dem die **theoretische Grundlage** zu Peter Lynch detailliert dokumentiert wurde (inkl. Kennzahlen, Zielwerte, Quellen und API-Endpunkte).
@@ -48,21 +72,20 @@ Dieses Praxisprojekt baut auf dem vorherigen WI-Projekt auf, in dem die **theore
 
 ---
 
+
 ## 3. Theoretische Grundlage – Kurzüberblick
 
-| Kategorie | Typische Unternehmen | Kerneigenschaft |
-|-----------|---------------------|-----------------|
-| Slow Growers | Versorger, alte Industrien | Niedriges Wachstum, stabile Dividenden |
-| Stalwarts | Markenriesen (z. B. Coca-Cola) | 5–10 % Gewinnwachstum |
-| Fast Growers | Wachstumsunternehmen | > 20 % Gewinnwachstum |
-| Cyclicals | Auto, Stahl, Airlines | Schwanken mit Konjunktur |
-| Turnarounds | Sanierungskandidaten | Rückkehr zur Profitabilität |
-| Asset Plays | Versteckte Werte | Buchwert > Marktwert |
-
+| Kategorie     | Typische Unternehmen             | Kerneigenschaft                         | Kurzbeschreibung (nach Peter Lynch) |
+|---------------|----------------------------------|------------------------------------------|-------------------------------------|
+| Slow Growers  | Versorger, alte Industrien       | Niedriges Wachstum, stabile Dividenden   | Große, etablierte Firmen mit kaum Wachstum; Lynch nutzt sie hauptsächlich wegen ihrer Dividenden. |
+| Stalwarts     | Markenriesen (z. B. Coca-Cola)   | 5–10 % Gewinnwachstum                    | Solide Unternehmen mit stabilem Wachstum; Lynch sieht sie als „sichere Pferde“ im Portfolio. |
+| Fast Growers  | Wachstumsunternehmen             | > 20 % Gewinnwachstum                    | Kleine bis mittelgroße Firmen mit hohem Wachstum; laut Lynch die besten Chancen auf große Kursgewinne. |
+| Cyclicals     | Auto, Stahl, Airlines            | Schwanken mit Konjunktur                 | Unternehmen, die stark von wirtschaftlichen Zyklen abhängen; Timing ist entscheidend. |
+| Turnarounds   | Sanierungskandidaten             | Rückkehr zur Profitabilität              | Unternehmen in schwieriger Lage, die sich erholen können; hohe Chance, aber auch höheres Risiko. |
+| Asset Plays   | Versteckte Werte                 | Buchwert > Marktwert                     | Firmen, deren wahre Werte (Immobilien, Vermögen, Beteiligungen) vom Markt unterschätzt werden. |
+---
 Nur die technische Umsetzung erfolgt hier.  
 Die vollständige Theorie → siehe WI-Projekt.
-
----
 
 ## 4. Systemarchitektur
 
@@ -100,6 +123,7 @@ Die vollständige Theorie → siehe WI-Projekt.
             │   Streamlit Dashboard  │
             │   Charts, Filter, UI   │
             └────────────────────────┘
+Das Architekturdiagramm zeigt den vollständigen Datenfluss der Anwendung: Finanzdaten werden über mehrere APIs abgerufen und anschließend durch eine Python-ETL-Pipeline bereinigt und vereinheitlicht. Die transformierten Daten werden in einem Elasticsearch-Index gespeichert, von dem aus das Streamlit-Dashboard die Informationen abruft, visualisiert und für die Analyse bereitstellt.
 
 ---
 
@@ -110,20 +134,23 @@ Die vollständige Theorie → siehe WI-Projekt.
   <br>
   <img src="Dashboard.png" alt="Dashboard" width="800">
 </details>
+Die Dashboard-Seite dient der Einzelanalyse einer Aktie. Nach Eingabe eines Symbols werden alle verfügbaren Kennzahlen geladen, berechnet und visualisiert. Zusätzlich erfolgt automatisch die Peter-Lynch-Kategorisierung inklusive Begründung. Historische Zeitreihen (z. B. KGV, Wachstum, FCF) ermöglichen eine detaillierte Bewertung der Unternehmensentwicklung.
 
 <details style="font-size: 1.1rem; margin-bottom: 10px;">
   <summary>📈 <strong>Portfolio</strong></summary>
   <br>
   <img src="Portfolio.png" alt="Portfolio" width="800">
 </details>
+Die Portfolio-Seite ermöglicht den Aufbau eines eigenen Wertpapierportfolios basierend auf den Lynch-Kategorien. Nutzer können Aktien auswählen, Gewichte festlegen und unterschiedliche Strategien (z. B. defensiv, wachstumsorientiert) vergleichen. Zudem werden Soll- und Ist-Verteilungen visualisiert und in Elasticsearch gespeichert.
 
 <details style="font-size: 1.1rem; margin-bottom: 10px;">
   <summary>📉 <strong>Top 10</strong></summary>
   <br>
   <img src="Top_10.png" alt="Top 10" width="800">
 </details>
-
+Die Top-10-Seite dient als Screening- und Ranking-Tool. Alle Aktien werden anhand der gewählten Lynch-Kategorie automatisch bewertet und nach Score sortiert. Branchen- und Marktkapitalisierungsfilter ermöglichen eine gezielte Auswahl. Zu jeder Aktie wird angezeigt, welche Kriterien erfüllt wurden und wie der Score zustande kommt.
 ---
+
 ## 5. Datenquellen & API-Abruf
 
 Dieser Abschnitt beschreibt, **woher** die Daten stammen und **wie** sie technisch in das System geladen werden – noch ohne Bezug auf das Elasticsearch-Datenmodell.
@@ -315,19 +342,35 @@ Das Projekt zeigt, dass sich ein vollständiger, automatisierter Analyse-Workflo
 ###  Erweiterbarkeit (bewusst vorgesehen)
 - **Technisch**: zusätzliche Datenquellen, Backtesting, Alerts, Scheduling
 - **Funktional**: ML-Modelle, internationale Märkte, Portfolio-Tracking, weitere Bewertungsmodelle
+### Zielerreichung
+
+1. **Automatisierter API-Abruf der S&P-500-Daten**  
+   Die ETL-Pipeline lädt Kennzahlen aus mehreren Quellen (FMP, yfinance, Alpha Vantage) automatisiert und robust.
+
+2. **Strukturierte Speicherung in Elasticsearch**  
+   Alle Daten werden vereinheitlicht, historisiert und in einem eigenen Index gespeichert – inklusive Mapping und Typisierung.
+
+3. **Automatische Klassifikation nach den 6 Lynch-Kategorien**  
+   Die Bewertungslogik wurde regelbasiert implementiert und arbeitet reproduzierbar sowie transparent.
+
+4. **Visualisierung über ein Streamlit-Dashboard**  
+   Die drei entwickelten Pages (Dashboard, Top-10, Portfolio) ermöglichen Analyse, Screening und Vergleich auf Basis der gespeicherten Daten.
+
+5. **Grundlage für zukünftige Erweiterungen geschaffen**  
+   Das System ist modular aufgebaut und technisch darauf ausgelegt, später um tägliche Updates, Alerts, Backtesting und ML-Komponenten ergänzt zu werden.
 
 ---
-
 ### Kurzfassung
 Aus einem **theoretischen Bewertungsmodell** wurde ein **lauffähiges, erweiterbares Analyse-System**,  
 das echte Investmententscheidungen unterstützen kann.
-
-
-
+  
 ## 10. Quellen
-Mergers, firm size, and volatility in a granular economy: https://www.sciencedirect.com/science/article/pii/S1094202524000437  
-One Up on Wall Street: https://www.thalia.de/shop/home/artikeldetails/A1003289250
-
+Merger... von Jackie M.L. Chan: https://www.sciencedirect.com/science/article/pii/S1094202524000437  
+One Up on Wall Street: https://www.thalia.de/shop/home/artikeldetails/A1003289250  
+FMP: https://site.financialmodelingprep.com/developer/docs   
+Alpha Vantage: https://www.alphavantage.co/documentation/  
+yfinance :   https://pypi.org/project/yfinance/   
+Elasticsearch: https://www.elastic.co/de/elasticsearch
 
 ---
 

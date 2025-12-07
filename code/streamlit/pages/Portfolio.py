@@ -28,16 +28,16 @@ st.title("📁 Portfolio-Zusammenstellung nach Peter Lynch")
 
 SAVE_PATH = "portfolio_speichern.csv"
 
-# === 2️⃣ Verbindung & Datenquellen-Umschalter ===
+# === 2️ Verbindung & Datenquellen-Umschalter ===
 es = get_es_connection()
-source_mode = render_source_selector("📡 Datenquelle")          # 👈 Sidebar-Umschalter
+source_mode = render_source_selector("📡 Datenquelle")      
 ensure_portfolio_index(es)
 
 # Daten laden – jeweils mit source_mode
 df_industries = load_industries(es, source_mode=source_mode)
 df_stocks = load_data_from_es(es, source_mode=source_mode)
 
-# 👇👇👇 HYDRATION: geladene Werte EINMALIG vor Widget-Erzeugung in den Session State schreiben
+
 if "hydrate_payload" in st.session_state:
     payload = st.session_state.pop("hydrate_payload")  # einmalig verwenden
     st.session_state["current_portfolio_id"] = payload.get("portfolio_id")
@@ -50,12 +50,12 @@ if "hydrate_payload" in st.session_state:
         for sym, amt in symvals.items():
             st.session_state[f"amt_{cat}_{sym}"] = float(amt)
 
-# === 3️⃣ Branchenfilter ===
+# === Branchenfilter ===
 st.sidebar.header("🔍 Filter")
 industries = ["Alle"] + sorted(df_industries["industry"].dropna().unique().tolist()) if not df_industries.empty else ["Alle"]
 selected_industry = st.sidebar.selectbox("Branche", industries)
 
-# === 4️⃣ Strategien nach Marktlage ===
+# ===  Strategien nach Marktlage ===
 strategien = {
     "Markt fällt": {"Slow Grower": 30, "Stalwarts": 25, "Fast Grower": 10, "Cyclicals": 10, "Turn Around": 10, "Assets Player": 15},
     "Seitwärtsmarkt": {"Slow Grower": 20, "Stalwarts": 25, "Fast Grower": 20, "Cyclicals": 15, "Turn Around": 10, "Assets Player": 10},
@@ -85,7 +85,7 @@ with col2:
     ax.axis("equal")
     st.pyplot(fig)
 
-# === 6️⃣ Top-Aktien je Kategorie (aus gewählter Quelle) ===
+# ===  Top-Aktien je Kategorie (aus gewählter Quelle) ===
 top10_by_category = {}
 for cat_label in verteilung.keys():
     rules = CATEGORIES[ALIAS.get(cat_label, cat_label)]
@@ -101,7 +101,7 @@ for cat_label in verteilung.keys():
                .head(10)["symbol"].dropna().drop_duplicates().tolist()
     )
 
-# === 7️⃣ Auswahl (links) & Zusammenfassung (rechts) ===
+# === Auswahl (links) & Zusammenfassung (rechts) ===
 col_left, col_right = st.columns([1.6, 1])
 
 with col_left:
