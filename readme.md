@@ -56,9 +56,11 @@ Das Projekt wurde iterativ umgesetzt und folgt einer klaren Data-Pipeline-Strukt
 
 ➡️ Ergebnis: Ein durchgängiger Analyse-Workflow von der Datenbeschaffung bis zur Bewertung und Visualisierung – modular, automatisierbar und erweiterbar.
 
+
+
 ## 2. Bezug zum WI-Projekt
 
-Dieses Praxisprojekt baut auf dem vorherigen WI-Projekt auf, in dem die **theoretische Grundlage** zu Peter Lynch detailliert dokumentiert wurde (inkl. Kennzahlen, Zielwerte, Quellen und API-Endpunkte).
+Dieses Praxisprojekt baut auf dem vorherigen WI-Projekt auf, in dem die **theoretische Grundlage** zu Peter Lynch (Broker) detailliert dokumentiert wurde (inkl. Kennzahlen, Zielwerte, Quellen und API-Endpunkte).
 
 | WI-Projekt (Theorie) | Praxisprojekt (Technik) |
 |----------------------|--------------------------|
@@ -90,14 +92,53 @@ Die vollständige Theorie → siehe WI-Projekt.
 ## 4. Systemarchitektur
 
 ### 4.1 Architekturübersicht
+#### 4.1.1. Development Environment (DEV)
+Lokale Umgebung zum Entwickeln und Testen:
 
-| Komponente | Aufgabe |
-|------------|---------|
-| **Python** | Datenabruf, Transformation, ETL-Pipeline |
-| **Elasticsearch** | Speicherung & indexbasiertes Querying |
-| **Docker Compose** | Infrastruktur-Orchestrierung |
-| **Streamlit** | Web-Frontend für Analyse |
-| **APIs** | FMP, yfinance, Alpha Vantage |
+- Python **3.10+**
+- Docker Compose
+- Elasticsearch (lokaler Container)
+- Streamlit (lokal auf **Port 8501**)
+- Lokale `.env`-Datei mit API-Keys
+
+Diese Umgebung wird während der Entwicklung genutzt, um ETL-Pipelines, Mapping, Dashboard und API-Anbindungen zu testen.
+
+---
+
+#### 4.1.2. Runtime Environment (Execution Layer)
+Betriebsumgebung der ETL-Pipeline:
+
+- Python-Skripte (`load_sp500.py`, `ingest_fmp.py`, etc.)
+- Cron/Scheduler für automatische tägliche Updates (geplant)
+- Zugriff auf externe APIs (FMP, yfinance, Alpha Vantage)
+- Verbindung zu Elasticsearch (lokal oder remote)
+
+Dieses Environment führt alle automatisierten Datenlade- und Transformationsprozesse aus.
+
+---
+
+#### 4.1.3. Container Environment / Infrastruktur
+Definiert über `docker-compose.yml`:
+
+- Container für Elasticsearch, Dashboard und optionale ETL-Services
+- Netzwerkdefinition, Ports, Volumes
+- Elasticsearch-Cluster-Konfiguration (Index, Storage, Persistenz)
+- Isolierte Services für saubere Trennung der Komponenten
+
+Dieses Environment stellt die technische Infrastruktur bereit, in der alle Services ausgeführt werden.
+
+---
+
+#### 4.1.4. Web-Environment (Dashboard)
+Frontend-Umgebung für die Benutzeroberfläche:
+
+- Streamlit-Dashboard
+- Live-Abfragen gegen Elasticsearch
+- Visualisierung von Kennzahlen, Zeitreihen, Rankings und Portfolios
+
+Dieses Environment bildet die interaktive Analyseschicht des Projekts.
+
+
 
 ### 4.2 Architekturdiagramm
 
@@ -132,21 +173,21 @@ Das Architekturdiagramm zeigt den vollständigen Datenfluss der Anwendung: Finan
 <details style="font-size: 1.1rem; margin-bottom: 10px;">
   <summary>📊 <strong>Dashboard</strong></summary>
   <br>
-  <img src="Dashboard.png" alt="Dashboard" width="800">
+  <img src="data/Dashboard.png" alt="Dashboard" width="800">
 </details>
 Die Dashboard-Seite dient der Einzelanalyse einer Aktie. Nach Eingabe eines Symbols werden alle verfügbaren Kennzahlen geladen, berechnet und visualisiert. Zusätzlich erfolgt automatisch die Peter-Lynch-Kategorisierung inklusive Begründung. Historische Zeitreihen (z. B. KGV, Wachstum, FCF) ermöglichen eine detaillierte Bewertung der Unternehmensentwicklung.
 
 <details style="font-size: 1.1rem; margin-bottom: 10px;">
   <summary>📈 <strong>Portfolio</strong></summary>
   <br>
-  <img src="Portfolio.png" alt="Portfolio" width="800">
+  <img src="data/Portfolio.png" alt="Portfolio" width="800">
 </details>
 Die Portfolio-Seite ermöglicht den Aufbau eines eigenen Wertpapierportfolios basierend auf den Lynch-Kategorien. Nutzer können Aktien auswählen, Gewichte festlegen und unterschiedliche Strategien (z. B. defensiv, wachstumsorientiert) vergleichen. Zudem werden Soll- und Ist-Verteilungen visualisiert und in Elasticsearch gespeichert.
 
 <details style="font-size: 1.1rem; margin-bottom: 10px;">
   <summary>📉 <strong>Top 10</strong></summary>
   <br>
-  <img src="Top_10.png" alt="Top 10" width="800">
+  <img src="data/Top_10.png" alt="Top 10" width="800">
 </details>
 Die Top-10-Seite dient als Screening- und Ranking-Tool. Alle Aktien werden anhand der gewählten Lynch-Kategorie automatisch bewertet und nach Score sortiert. Branchen- und Marktkapitalisierungsfilter ermöglichen eine gezielte Auswahl. Zu jeder Aktie wird angezeigt, welche Kriterien erfüllt wurden und wie der Score zustande kommt.
 ---
@@ -294,7 +335,8 @@ Die Regeln sind zentral in `lynch_criteria.py` definiert und legen fest:
 [Link zur Quelle, die Punkt 5 befürwortet.](https://www.sciencedirect.com/science/article/pii/S1094202524000437)
 
 ### Beispiel:
-![alt text](image.png)
+![alt text](data/image.png)
+
 
 ## 8. Setup & Deployment
 
@@ -370,8 +412,11 @@ One Up on Wall Street: https://www.thalia.de/shop/home/artikeldetails/A100328925
 FMP: https://site.financialmodelingprep.com/developer/docs   
 Alpha Vantage: https://www.alphavantage.co/documentation/  
 yfinance :   https://pypi.org/project/yfinance/   
-Elasticsearch: https://www.elastic.co/de/elasticsearch
-
+Elasticsearch: https://www.elastic.co/de/elasticsearch  
+Docker: https://www.docker.com   
+Streamlit: https://streamlit.io  
+Python: https://www.python.org   
+Visualstudio: https://code.visualstudio.com
 ---
 
 

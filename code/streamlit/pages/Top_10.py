@@ -388,26 +388,43 @@ if "marketCap" in df.columns and not df["marketCap"].dropna().empty:
 
 # === Bewertung ===
 def evaluate_stock(row, criteria):
-    # 1) Score zentral über score_row berechnen
+    """
+    Bewertet eine Zeile:
+    Score = score_row(row)
+    MaxScore = len(criteria) (immer 6 etc.)
+    """
     score = score_row(row, criteria)
     max_score = len(criteria)
 
-    # 2) Detail-Liste für die Anzeige (bleibt Page-spezifisch)
     results = []
     getv = row.get if isinstance(row, dict) else row.__getitem__
 
-    for field, label, rule, optional in criteria:
+    for item in criteria:
+        if len(item) == 2:
+            field, rule = item
+            label = field
+            optional = False
+        else:
+            field, label, rule, optional = item
+
         try:
             val = getv(field)
         except Exception:
             val = None
 
         ok = False
+        hinweis = None
+
+        # gleiche Sonderlogik wie score_row: <=0 zählt als "nicht erfüllt"
         if isinstance(val, (int, float)):
-            try:
-                ok = rule(val)
-            except Exception:
+            if field in {"peRatio", "earningsGrowth", "epsGrowth"} and val <= 0:
+                hinweis = "Bewertung nicht möglich: Wert ist 0 oder negativ."
                 ok = False
+            else:
+                try:
+                    ok = bool(rule(val))
+                except Exception:
+                    ok = False
 
         results.append(
             {
@@ -416,10 +433,12 @@ def evaluate_stock(row, criteria):
                 "Istwert": val,
                 "Erfüllt": ok,
                 "Optional": optional,
+                "Hinweis": hinweis,
             }
         )
 
     return score, max_score, results
+
 
 
 scores = df.apply(lambda r: evaluate_stock(r, criteria), axis=1)
@@ -520,6 +539,7 @@ with col_l:
     for item in row["Details"]:
         label = item["Kennzahl"]
         field = item["Feld"]
+        hinweis = item.get("Hinweis")
 
         override = growth_fields_now.get(field)
         if override is not None:
@@ -527,21 +547,40 @@ with col_l:
         else:
             now_v = _get_with_fallback(curr_doc, field) if isinstance(curr_doc, dict) else row.get(field)
 
-        st.write(
-            f"{_icon(item['Erfüllt'], item['Optional'])} "
-            f"**{label}** → **Ist:** {_fmt_value(now_v, field)}"
-        )
+        if hinweis:
+            # Nur Hinweis anzeigen – KEIN Wert
+            st.write(
+                f"{_icon(False, item['Optional'])} "
+                f"**{label}** → _{hinweis}_"
+            )
+        else:
+            # Normalfall: Wert anzeigen
+            st.write(
+                f"{_icon(item['Erfüllt'], item['Optional'])} "
+                f"**{label}** → **Ist:** {_fmt_value(now_v, field)}"
+            )
+
+
 
 # ---- Vor ~1 Jahr ----
+# QoQ-Werte sind schon berechnet:
+# umsatz_qoq_prev, gewinn_qoq_prev
+
 with col_r:
     st.markdown("### Vor ~1 Jahr")
     if not ok_prev or not isinstance(prev_doc, dict):
-        msg = "Keine verwertbaren Werte im Vorjahresquartal gefunden."
-        if prev_doc and prev_dist is not None:
-            msg += f" (nächstes Dokument: {int(prev_dist)} Tage entfernt)"
-        st.info(msg)
+        ...
     else:
-        prev_score, prev_maxscore, prev_details = evaluate_stock(prev_doc, criteria)
+        # 🔧 NEU: Kopie des Dokuments für die Bewertung anlegen
+        eval_doc = dict(prev_doc)
+        if umsatz_qoq_prev is not None:
+            eval_doc["revenueGrowth"] = umsatz_qoq_prev
+        if gewinn_qoq_prev is not None:
+            eval_doc["earningsGrowth"] = gewinn_qoq_prev
+            eval_doc["epsGrowth"] = gewinn_qoq_prev
+
+        # Bewertung jetzt auf Basis der QoQ-Werte
+        prev_score, prev_maxscore, prev_details = evaluate_stock(eval_doc, criteria)
         prev_date = _parse_es_date(prev_doc.get("date"))
 
         base_doc_for_plain = prev_quarter_prev or prev_doc
@@ -551,6 +590,7 @@ with col_r:
             field = item["Feld"]
             ok_flag = item["Erfüllt"]
             opt_flag = item["Optional"]
+            hinweis = item.get("Hinweis")
 
             override = growth_fields_prev.get(field)
             if override is not None:
@@ -558,23 +598,16 @@ with col_r:
             else:
                 prev_v = _get_with_fallback(base_doc_for_plain, field)
 
-            st.write(
-                f"{_icon(ok_flag, opt_flag)} "
-                f"**{label}** → **Damals:** {_fmt_value(prev_v, field)}"
-            )
-
-    src_cur  = curr_doc.get("source") if isinstance(curr_doc, dict) else None
-    src_prev = prev_doc.get("source") if (ok_prev and isinstance(prev_doc, dict)) else None
-    date_cur = _parse_es_date(curr_doc.get("date")) if isinstance(curr_doc, dict) else None
-    date_prev= _parse_es_date(prev_doc.get("date")) if (ok_prev and isinstance(prev_doc, dict)) else None
-
-    st.caption(
-        f"Quelle aktuell: {src_cur or '–'}{(' • '+date_cur.isoformat()) if date_cur else ''}  |  "     
-
-        f"Quelle vor ~1 Jahr: {src_prev or '–'}{(' • '+(date_prev.isoformat() if date_prev else '–'))}"
-    )
-
-st.metric("Gesamtscore", f"{row['Score']} / {row['MaxScore']}", f"{row['Score %']} %")
+            if hinweis:
+                st.write(
+                    f"{_icon(False, opt_flag)} "
+                    f"**{label}** → _{hinweis}_"
+                )
+            else:
+                st.write(
+                    f"{_icon(ok_flag, opt_flag)} "
+                    f"**{label}** → **Damals:** {_fmt_value(prev_v, field)}"
+                )
 
 
 

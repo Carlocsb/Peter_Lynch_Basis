@@ -424,29 +424,66 @@ def zeige_kennzahlverlauf(df: pd.DataFrame, symbol: str, titel: str, einheit: st
 #  PETER-LYNCH-KATEGORISIERUNG
 # ==========================================================
 
+# ganz oben in der Nähe von score_row:
+
+
+
+SPECIAL_FIELDS_STRICT = {
+    "peRatio",
+    "earningsGrowth",
+    "epsGrowth",
+    "revenueGrowth",
+    "dividendYield",
+    "freeCashFlowPerShare",
+    "freeCashFlow",
+    "profitMargin",
+}
+
+
 def score_row(row_or_dict, criteria):
     """
-    Bewertet eine Aktie nach übergebenen Kriterien.
-    Unterstützt zwei Formate:
-    - [(feld, regel)]
-    - [(feld, beschreibung, regel, optional)]
+    Bewertet eine Aktie anhand der Lynch-Kriterien.
+
+    Regeln:
+    - MaxScore bleibt IMMER = len(criteria) (wird nicht dynamisch angepasst)
+    - peRatio, earningsGrowth, epsGrowth:
+        Wenn Wert <= 0 → automatisch 'nicht erfüllt', egal ob Regel True wäre
     """
+
     getv = (row_or_dict.get if isinstance(row_or_dict, dict) else row_or_dict.__getitem__)
     score = 0
+
     for item in criteria:
         try:
+            # zwei mögliche Formate der Kriterien
             if len(item) == 2:
                 field, rule = item
             elif len(item) >= 3:
-                field, _, rule = item[:3]
+                field, _, rule, *rest = item
             else:
                 continue
+
+            # Wert abrufen
             val = getv(field)
-            if isinstance(val, (int, float)) and not pd.isna(val) and rule(val):
-                score += 1
+            if not isinstance(val, (int, float)) or pd.isna(val):
+                continue
+
+            # Sonderfall: KGV & Gewinnwachstum → <=0 immer falsch
+            if field in SPECIAL_FIELDS_STRICT and val <= 0:
+                continue  # kein Score++
+
+            # normale Regelprüfung
+            try:
+                if rule(val):
+                    score += 1
+            except Exception:
+                continue
+
         except Exception:
             continue
+
     return score
+
 
 
 def berechne_peter_lynch_kategorie(daten: dict, schwelle_gleichheit: float = 0.02):
